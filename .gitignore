@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+backend/db/
+*.sqlite3
+*.db
+.env
+node_modules/
+frontend/node_modules/
+frontend/.svelte-kit/
+frontend/build/
+frontend/dist/
+*.egg-info/
+.idea/

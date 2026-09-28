@@ -1,0 +1,97 @@
+/* 1. Skeleton wintry theme (sets CSS custom properties) */
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/wintry.css";
+
+/* 2. Skeleton utilities (requires Tailwind v4 to process @utility / @variant) */
+@import "../node_modules/@skeletonlabs/skeleton/src/index.css";
+
+/* 3. Tailwind v4 base + utilities */
+@import "tailwindcss";
+
+/* ── Apply Skeleton utilities to bare HTML elements ──────────────────────── */
+
+input:not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='button']):not([type='range']):not([type='color']) {
+  @apply input;
+}
+
+select {
+  @apply select;
+}
+
+button {
+  @apply btn preset-filled-primary-500;
+}
+
+button.secondary {
+  @apply preset-filled-surface-500;
+}
+
+button.warn {
+  @apply preset-filled-error-500;
+}
+
+table {
+  @apply table;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-surface-200);
+}
+
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+/* ── Custom components ────────────────────────────────────────────────────── */
+
+.card {
+  background-color: var(--color-surface-600);
+  border: 1px solid var(--color-surface-200);
+  border-radius: var(--radius-container);
+  padding: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+tr:hover td {
+  background-color: var(--color-surface-50);
+}
+
+a {
+  color: var(--color-primary-600);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.error {
+  color: var(--color-error-600);
+}
+
+.ok {
+  color: var(--color-success-700);
+}
+
