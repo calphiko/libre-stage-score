@@ -4,6 +4,7 @@ __pycache__/
 .coverage
 htmlcov/
 backend/db/
+backend/storage/
 *.sqlite3
 *.db
 .env
