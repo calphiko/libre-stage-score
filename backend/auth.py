@@ -202,7 +202,68 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> dict:
     if user_db and user_db.status == "deactivated":
         raise HTTPException(status_code=401, detail="Account is deactivated")
 
-    return {"user_name": username, "user_group": user_group}
+    return {"user_id": user_db.id if user_db else None, "user_name": username, "user_group": user_group}
+
+
+def is_admin(user_group: str | None) -> bool:
+    return (user_group or "").lower() == "admin"
+
+
+def is_editor_or_admin(user_group: str | None) -> bool:
+    normalized = (user_group or "").lower()
+    return normalized in {"admin", "editor"}
+
+
+def require_admin(current: dict) -> None:
+    if not is_admin(current.get("user_group")):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
+def require_editor_or_admin(current: dict) -> None:
+    if not is_editor_or_admin(current.get("user_group")):
+        raise HTTPException(status_code=403, detail="Editor or admin privileges required")
+
+
+def user_group_ids(db: Session, user_id: int) -> set[int]:
+    rows = db.query(models.UserGroupMembership.group_id).filter(models.UserGroupMembership.user_id == user_id).all()
+    return {row[0] for row in rows}
+
+
+def user_can_access_document(db: Session, current_user: dict, document_type: str, document_id: int) -> bool:
+    if is_admin(current_user.get("user_group")):
+        return True
+    if is_editor_or_admin(current_user.get("user_group")):
+        return True
+
+    user_id = current_user.get("user_id")
+    if user_id is None:
+        return False
+
+    if (
+        db.query(models.DocumentAccess.id)
+        .filter(
+            models.DocumentAccess.document_type == document_type,
+            models.DocumentAccess.document_id == document_id,
+            models.DocumentAccess.user_id == user_id,
+        )
+        .first()
+    ):
+        return True
+
+    group_ids = user_group_ids(db, user_id)
+    if not group_ids:
+        return False
+
+    return (
+        db.query(models.DocumentAccess.id)
+        .filter(
+            models.DocumentAccess.document_type == document_type,
+            models.DocumentAccess.document_id == document_id,
+            models.DocumentAccess.group_id.in_(sorted(group_ids)),
+        )
+        .first()
+        is not None
+    )
 
 
 def verify_password_reset_token(

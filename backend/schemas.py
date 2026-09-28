@@ -23,6 +23,12 @@ class UserGroup(str, Enum):
     user = "user"
 
 
+class AccessScope(str, Enum):
+    user = "user"
+    group = "group"
+    public = "public"
+
+
 class UserStatus(str, Enum):
     active = "active"
     deactivated = "deactivated"
@@ -37,12 +43,34 @@ class UserCreate(BaseModel):
     status: UserStatus = UserStatus.active
 
 
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    notes: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+    notes: str | None = None
+
+
+class GroupUpdate(GroupCreate):
+    pass
+
+
+class UserGroupMembershipUpdate(BaseModel):
+    group_ids: list[int] = Field(default_factory=list)
+
+
 class UserOut(BaseModel):
     id: int
     user_name: str
     user_group: UserGroup
     email: EmailStr
     clear_name: str
+    groups: list[GroupOut] = Field(default_factory=list)
 
     status: UserStatus = UserStatus.active
 

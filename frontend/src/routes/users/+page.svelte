@@ -251,51 +251,53 @@
 
   <section class="card">
     <h2>Alle Benutzer</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Username</th>
-          <th>Klarname</th>
-          <th>E-Mail</th>
-          <th>Rolle</th>
-          <th>Status</th>
-          <th>Aktion</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each allUsers as user}
+    <div class="table-wrap">
+      <table>
+        <thead>
           <tr>
-            <td>{user.id}</td>
-            <td><input bind:value={user.user_name} /></td>
-            <td><input bind:value={user.clear_name} /></td>
-            <td><input bind:value={user.email} /></td>
-            <td>
-              <select bind:value={user.user_group}>
-                <option value="user">user</option>
-                <option value="editor">editor</option>
-                <option value="admin">admin</option>
-              </select>
-            </td>
-            <td>
-              <select bind:value={user.status}>
-                <option value="active">active</option>
-                <option value="deactivated">deactivated</option>
-              </select>
-            </td>
-            <td>
-              <div class="row">
-                <button onclick={() => saveAdminUser(user)}>Speichern</button>
-                <button class="secondary" onclick={() => triggerReset(user)}>Reset-Link</button>
-                <button class="warn" onclick={() => toggleActive(user)}>
-                  {user.status === "active" ? "Deaktivieren" : "Aktivieren"}
-                </button>
-              </div>
-            </td>
+            <th>ID</th>
+            <th>Username</th>
+            <th>Klarname</th>
+            <th>E-Mail</th>
+            <th>Rolle</th>
+            <th>Status</th>
+            <th>Aktion</th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each allUsers as user}
+            <tr>
+              <td>{user.id}</td>
+              <td><input bind:value={user.user_name} /></td>
+              <td><input bind:value={user.clear_name} /></td>
+              <td><input bind:value={user.email} /></td>
+              <td>
+                <select bind:value={user.user_group}>
+                  <option value="user">user</option>
+                  <option value="editor">editor</option>
+                  <option value="admin">admin</option>
+                </select>
+              </td>
+              <td>
+                <select bind:value={user.status}>
+                  <option value="active">active</option>
+                  <option value="deactivated">deactivated</option>
+                </select>
+              </td>
+              <td>
+                <div class="row">
+                  <button onclick={() => saveAdminUser(user)}>Speichern</button>
+                  <button class="secondary" onclick={() => triggerReset(user)}>Reset-Link</button>
+                  <button class="warn" onclick={() => toggleActive(user)}>
+                    {user.status === "active" ? "Deaktivieren" : "Aktivieren"}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </section>
 
   <section class="card">

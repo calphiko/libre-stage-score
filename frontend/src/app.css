@@ -1,47 +1,48 @@
-/* 1. Skeleton wintry theme (sets CSS custom properties) */
-@import "../node_modules/@skeletonlabs/skeleton/src/themes/wintry.css";
-
-/* 2. Skeleton utilities (requires Tailwind v4 to process @utility / @variant) */
+/* 1. Skeleton base + primitives */
 @import "../node_modules/@skeletonlabs/skeleton/src/index.css";
+
+/* 2. All built-in Skeleton themes so the app can switch themes at runtime via data-theme */
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/catppuccin.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/cerberus.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/concord.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/crimson.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/dracula.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/fennec.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/hamlindigo.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/legacy.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/mint.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/modern.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/mona.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/nosh.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/nouveau.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/pine.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/reign.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/rocket.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/rose.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/rosepine.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/sahara.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/seafoam.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/terminus.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/vintage.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/vox.css";
+@import "../node_modules/@skeletonlabs/skeleton/src/themes/wintry.css";
 
 /* 3. Tailwind v4 base + utilities */
 @import "tailwindcss";
-
-/* ── Apply Skeleton utilities to bare HTML elements ──────────────────────── */
-
-input:not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='button']):not([type='range']):not([type='color']) {
-  @apply input;
-}
-
-select {
-  @apply select;
-}
-
-button {
-  @apply btn preset-filled-primary-500;
-}
-
-button.secondary {
-  @apply preset-filled-surface-500;
-}
-
-button.warn {
-  @apply preset-filled-error-500;
-}
-
-table {
-  @apply table;
-}
-
-/* ── Layout ───────────────────────────────────────────────────────────────── */
 
 * {
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  background-color: var(--color-surface-200);
+  background-color: var(--color-surface-100-900);
+  color: var(--color-surface-950-50);
 }
 
 main {
@@ -50,48 +51,191 @@ main {
   padding: 1rem;
 }
 
-/* ── Custom components ────────────────────────────────────────────────────── */
+h1 {
+  @apply h1;
+}
+
+h2 {
+  @apply h2;
+}
+
+h3 {
+  @apply h3;
+}
+
+h4 {
+  @apply h4;
+}
+
+a {
+  @apply anchor;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]) {
+  @apply input;
+}
+
+select {
+  @apply select;
+}
+
+textarea {
+  @apply textarea;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]),
+select,
+textarea {
+  background-color: color-mix(in oklab, var(--color-surface-50-950) 88%, var(--color-surface-950-50) 12%);
+  --tw-ring-color: color-mix(in oklab, var(--color-surface-950-50) 16%, transparent);
+  transition:
+    background-color var(--default-transition-duration) var(--default-transition-timing-function),
+    box-shadow var(--default-transition-duration) var(--default-transition-timing-function);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):hover,
+select:hover,
+textarea:hover {
+  --tw-ring-color: color-mix(in oklab, var(--color-surface-950-50) 22%, transparent);
+}
+
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):focus,
+select:focus,
+textarea:focus,
+input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):focus-within,
+select:focus-within,
+textarea:focus-within {
+  background-color: var(--color-surface-50-950);
+  --tw-ring-color: color-mix(in oklab, var(--color-primary-500) 70%, var(--color-surface-950-50) 20%);
+}
+
+button {
+  @apply btn preset-filled-primary-500;
+}
+
+button.secondary {
+  @apply btn preset-tonal-surface;
+}
+
+button.warn {
+  @apply btn preset-tonal-error;
+}
+
+table {
+  @apply table table-zebra;
+}
+
+dialog {
+  @apply dialog preset-tonal-surface;
+}
+
+label {
+  @apply label-text;
+  display: block;
+}
+
+label:has(input:not([type="checkbox"]):not([type="radio"])),
+label:has(select),
+label:has(textarea) {
+  display: grid;
+  gap: 0.25rem;
+  width: 100%;
+}
+
+label:has(input[type="checkbox"]),
+label:has(input[type="radio"]) {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--text-sm);
+  line-height: var(--text-sm--line-height);
+  font-weight: var(--font-weight-normal);
+}
 
 .card {
-  background-color: var(--color-surface-600);
-  border: 1px solid var(--color-surface-200);
-  border-radius: var(--radius-container);
-  padding: 1rem;
+  @apply card preset-tonal-surface;
   margin-bottom: 1rem;
+  padding: 1rem;
   box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
+}
+
+.card > :first-child {
+  margin-top: 0;
+}
+
+.card > :last-child {
+  margin-bottom: 0;
 }
 
 .row {
   display: flex;
-  gap: 0.5rem;
+  gap: 1rem;
   flex-wrap: wrap;
   align-items: flex-start;
 }
 
-label {
-  font-weight: 600;
-  display: block;
-  margin-bottom: 0.25rem;
+.table-wrap {
+  @apply table-wrap;
 }
 
-tr:hover td {
-  background-color: var(--color-surface-50);
+.clickable-row {
+  cursor: pointer;
 }
 
-a {
-  color: var(--color-primary-600);
-  text-decoration: none;
+.clickable-row:hover td {
+  background-color: color-mix(in oklab, var(--color-primary-500) 8%, transparent);
 }
 
-a:hover {
-  text-decoration: underline;
+.app-header {
+  @apply preset-filled-primary-500;
+  margin-bottom: 1rem;
+}
+
+.app-header__inner {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.app-header__title {
+  font-size: var(--text-xl);
+  line-height: var(--text-xl--line-height);
+  font-weight: var(--font-weight-semibold);
+}
+
+.app-header__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+}
+
+.app-header__nav a {
+  color: inherit;
+}
+
+.app-header__meta {
+  opacity: 0.85;
+}
+
+.theme-switch {
+  min-width: 11rem;
+}
+
+.theme-switch select {
+  min-width: 11rem;
 }
 
 .error {
-  color: var(--color-error-600);
+  color: var(--color-error-700);
 }
 
 .ok {
   color: var(--color-success-700);
 }
-

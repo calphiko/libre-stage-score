@@ -16,12 +16,17 @@ from backend.utils.mailer import send_email
 
 async def user_is_admin(request: Request, db: Session = Depends(auth.get_db)):
     user = auth.get_current_user(request, db)
-    if user.get("user_group") != "admin":
-        raise HTTPException(status_code=403, detail="User is not Admin")
+    auth.require_admin(user)
     return user
 
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(user_is_admin)])
+async def user_is_editor_or_admin(request: Request, db: Session = Depends(auth.get_db)):
+    user = auth.get_current_user(request, db)
+    auth.require_editor_or_admin(user)
+    return user
+
+
+router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(user_is_editor_or_admin)])
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCORES_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "scores"
 
@@ -287,12 +292,84 @@ def _build_storage_status(
     )
 
 
-@router.get("/users", response_model=list[schemas.UserOut])
+@router.get("/groups", response_model=list[schemas.GroupOut], dependencies=[Depends(user_is_admin)])
+def list_groups(db: Session = Depends(auth.get_db)):
+    return db.query(models.Group).order_by(models.Group.name.asc()).all()
+
+
+@router.post("/groups", response_model=schemas.GroupOut, dependencies=[Depends(user_is_admin)])
+def create_group(group: schemas.GroupCreate, db: Session = Depends(auth.get_db)):
+    normalized_name = group.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Group name must not be empty")
+    existing = db.query(models.Group).filter(models.Group.name == normalized_name).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Group already exists")
+    db_group = models.Group(name=normalized_name, notes=group.notes.strip() if group.notes else None)
+    db.add(db_group)
+    db.commit()
+    db.refresh(db_group)
+    return db_group
+
+
+@router.put("/groups/{group_id}", response_model=schemas.GroupOut, dependencies=[Depends(user_is_admin)])
+def update_group(group_id: int, group: schemas.GroupUpdate, db: Session = Depends(auth.get_db)):
+    db_group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not db_group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    normalized_name = group.name.strip()
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Group name must not be empty")
+    duplicate = db.query(models.Group).filter(models.Group.name == normalized_name, models.Group.id != group_id).first()
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Group already exists")
+    db_group.name = normalized_name
+    db_group.notes = group.notes.strip() if group.notes else None
+    db.commit()
+    db.refresh(db_group)
+    return db_group
+
+
+@router.delete("/groups/{group_id}", dependencies=[Depends(user_is_admin)])
+def delete_group(group_id: int, db: Session = Depends(auth.get_db)):
+    db_group = db.query(models.Group).filter(models.Group.id == group_id).first()
+    if not db_group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    db.delete(db_group)
+    db.commit()
+    return {"message": "Group deleted"}
+
+
+@router.get("/users", response_model=list[schemas.UserOut], dependencies=[Depends(user_is_admin)])
 def get_all_users(db: Session = Depends(auth.get_db)):
     return db.query(models.User).order_by(models.User.id.asc()).all()
 
 
-@router.post("/users", response_model=schemas.UserOut)
+@router.get("/users/{user_id}/groups", response_model=list[schemas.GroupOut], dependencies=[Depends(user_is_admin)])
+def get_user_groups(user_id: int, db: Session = Depends(auth.get_db)):
+    user_db = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user_db:
+        raise HTTPException(status_code=404, detail="User not found")
+    return [membership.group for membership in db.query(models.UserGroupMembership).filter(models.UserGroupMembership.user_id == user_id).all()]
+
+
+@router.put("/users/{user_id}/groups", dependencies=[Depends(user_is_admin)])
+def update_user_groups(user_id: int, payload: schemas.UserGroupMembershipUpdate, db: Session = Depends(auth.get_db)):
+    user_db = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user_db:
+        raise HTTPException(status_code=404, detail="User not found")
+    if payload.group_ids:
+        groups = db.query(models.Group).filter(models.Group.id.in_(payload.group_ids)).all()
+        if len(groups) != len(set(payload.group_ids)):
+            raise HTTPException(status_code=404, detail="One or more groups not found")
+    db.query(models.UserGroupMembership).filter(models.UserGroupMembership.user_id == user_id).delete()
+    for group in groups if payload.group_ids else []:
+        db.add(models.UserGroupMembership(user_id=user_id, group_id=group.id))
+    db.commit()
+    return {"message": "User groups updated"}
+
+
+@router.post("/users", response_model=schemas.UserOut, dependencies=[Depends(user_is_admin)])
 def create_user(user: schemas.UserCreate, db: Session = Depends(auth.get_db)):
     existing = db.query(models.User).filter(models.User.user_name == user.user_name).first()
     if existing:

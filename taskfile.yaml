@@ -7,8 +7,15 @@ tasks:
       - cd frontend && npm install
     desc: Install backend and frontend dependencies
 
+  db:prepare:
+    cmds:
+      - mkdir -p backend/db
+      - touch backend/db/app.db
+    desc: Ensure the SQLite database file exists
+
   backend-dev:
     cmds:
+      - task db:prepare
       - uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     desc: Start FastAPI backend
 

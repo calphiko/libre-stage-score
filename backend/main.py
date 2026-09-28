@@ -31,6 +31,42 @@ def _ensure_backward_compatible_schema() -> None:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE scores ADD COLUMN file_hash VARCHAR(64)"))
 
+    user_columns = _sqlite_column_names("users")
+    if user_columns:
+        for column_name, column_def in {
+            "musician": "BOOLEAN NOT NULL DEFAULT 0",
+            "is_singer": "BOOLEAN NOT NULL DEFAULT 0",
+            "mm_username": "VARCHAR(128)",
+        }.items():
+            if column_name not in user_columns:
+                with engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_def}"))
+
+    existing_tables = set()
+    with engine.connect() as connection:
+        rows = connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing_tables = {str(row[0]) for row in rows}
+
+    if "groups" not in existing_tables:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE groups (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, name VARCHAR(128) NOT NULL UNIQUE, notes TEXT)"))
+
+    if "user_groups" not in existing_tables:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE user_groups (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, group_id INTEGER NOT NULL, UNIQUE(user_id, group_id), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE)"
+                )
+            )
+
+    if "document_access" not in existing_tables:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE document_access (id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, document_type VARCHAR(32) NOT NULL, document_id INTEGER NOT NULL, user_id INTEGER, group_id INTEGER, UNIQUE(document_type, document_id, user_id, group_id), FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, FOREIGN KEY(group_id) REFERENCES groups(id) ON DELETE CASCADE)"
+                )
+            )
+
 
 _ensure_backward_compatible_schema()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -264,6 +300,12 @@ def get_me(current=Depends(auth.get_current_user), db: Session = Depends(auth.ge
     return user
 
 
+@app.get("/groups", response_model=list[schemas.GroupOut])
+def list_groups(current=Depends(auth.get_current_user), db: Session = Depends(auth.get_db)):
+    auth.require_editor_or_admin(current)
+    return db.query(models.Group).order_by(models.Group.name.asc()).all()
+
+
 @app.put("/update_user", response_model=schemas.UserOut)
 def update_user(
     payload: schemas.UserSelfUpdate,
@@ -317,12 +359,15 @@ def get_users_list(_=Depends(auth.get_current_user), db: Session = Depends(auth.
 
 
 @app.get("/scores/{score_id}/document")
-def get_score_document(score_id: int, _=Depends(auth.get_current_user), db: Session = Depends(auth.get_db)):
+def get_score_document(score_id: int, current=Depends(auth.get_current_user), db: Session = Depends(auth.get_db)):
     score = db.query(models.Score).filter(models.Score.id == score_id).first()
     if not score:
         raise HTTPException(status_code=404, detail="Score not found")
     if not score.storage_path:
         raise HTTPException(status_code=404, detail="Score has no storage path")
+
+    if not auth.user_can_access_document(db, current, "score", score_id):
+        raise HTTPException(status_code=403, detail="You do not have access to this document")
 
     file_path = _resolve_pdf_path(score.storage_path)
     return FileResponse(path=file_path, media_type="application/pdf", filename=file_path.name)

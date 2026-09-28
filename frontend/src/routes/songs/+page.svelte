@@ -3,7 +3,9 @@
   import { onMount } from "svelte";
   import {
     createCollection,
+    createSong,
     deleteCollection,
+    deleteSong,
     getCollections,
     getInstruments,
     getScores,
@@ -13,6 +15,7 @@
     getUser,
     rescrapeStorage,
     updateCollection,
+    updateSong,
     updateSongCollections,
     uploadScorePdf,
   } from "$lib/api.js";
@@ -28,6 +31,7 @@
   let activeSong = null;
   let activeSongScores = [];
   let scoresModal = null;
+  let songModal = null;
   let modalTab = "scores";
   let selectedSongCollectionIds = [];
   let uploadForm = {
@@ -40,6 +44,22 @@
   };
   let isDragActive = false;
   let collectionForm = { name: "", notes: "" };
+  let songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
+  let editingSongId = null;
+  let songFormMode = "create";
+
+  function resetSongForm() {
+    songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
+    editingSongId = null;
+    songFormMode = "create";
+  }
+
+  function closeSongModal() {
+    if (songModal?.open) {
+      songModal.close();
+    }
+    resetSongForm();
+  }
 
   function normalizeCollections(items) {
     return items.map((collection) => ({ ...collection, notes: collection.notes ?? "" }));
@@ -292,6 +312,79 @@
     }
   }
 
+  function beginSongCreate() {
+    resetSongForm();
+    songFormMode = "create";
+    songModal?.showModal();
+  }
+
+  function beginSongEdit(song) {
+    editingSongId = song.id;
+    songFormMode = "edit";
+    songForm = {
+      name: song.name ?? "",
+      tune: song.tune ?? "",
+      composer: song.composer ?? "",
+      arrangement: song.arrangement ?? "",
+      length: song.length ?? "",
+      notes: song.notes ?? "",
+    };
+    songModal?.showModal();
+  }
+
+  async function saveSong() {
+    error = "";
+    ok = "";
+    const payload = {
+      name: songForm.name.trim(),
+      tune: songForm.tune.trim() || null,
+      composer: songForm.composer.trim() || null,
+      arrangement: songForm.arrangement.trim() || null,
+      length: songForm.length ? songForm.length : null,
+      notes: songForm.notes.trim() || null,
+    };
+
+    if (!payload.name) {
+      error = "Bitte einen Titel für das Stück eingeben.";
+      return;
+    }
+
+    try {
+      if (songFormMode === "edit" && editingSongId != null) {
+        await updateSong(editingSongId, payload);
+        ok = "Stück aktualisiert.";
+      } else {
+        await createSong(payload);
+        ok = "Stück angelegt.";
+      }
+      closeSongModal();
+      await refreshSongsAndCollections();
+      if (activeSong) {
+        activeSong = songs.find((song) => song.id === activeSong.id) ?? activeSong;
+      }
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  async function removeSong(song) {
+    error = "";
+    ok = "";
+    if (!confirm(`Dieses Stück "${song.name}" wirklich löschen?`)) {
+      return;
+    }
+    try {
+      await deleteSong(song.id);
+      ok = "Stück gelöscht.";
+      if (activeSong?.id === song.id) {
+        closeScoresModal();
+      }
+      await refreshSongsAndCollections();
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
   onMount(loadAll);
   function selectUploadFile(file) {
     if (!file) return;
@@ -315,7 +408,7 @@
 </script>
 
 <style>
-  dialog.card {
+  .app-dialog {
     width: min(1200px, 96vw);
     max-width: 96vw;
     min-height: 70vh;
@@ -383,45 +476,67 @@
   {/if}
 
   <section class="card">
-    <h2>Stücke</h2>
+    <div class="row" style="align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
+      <h2 style="margin: 0;">Stücke</h2>
+      {#if me.user_group === "admin"}
+        <button
+          aria-label="Neues Stück anlegen"
+          title="Neues Stück anlegen"
+          onclick={beginSongCreate}
+          style="min-width: 2.5rem; padding-inline: 0.75rem;"
+        >
+          +
+        </button>
+      {/if}
+    </div>
     <p>
-      <input
-        placeholder="Filtern (Name, Tonart, Komponist, Arrangement, Notizen)"
-        bind:value={songFilter}
-        style="width: 100%;"
-      />
+      <input placeholder="Filtern (Name, Tonart, Komponist, Arrangement, Notizen)" bind:value={songFilter} />
     </p>
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Name</th>
-          <th>Tonart</th>
-          <th>Komponist</th>
-          <th>Arrangement</th>
-          <th>Sammlungen</th>
-          <th>Länge</th>
-          <th>Notizen</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each filteredSongs as song}
-          <tr onclick={() => openScoresModal(song)} style="cursor: pointer;">
-            <td>{song.id}</td>
-            <td>{song.name}</td>
-            <td>{song.tune ?? "-"}</td>
-            <td>{song.composer ?? "-"}</td>
-            <td>{song.arrangement ?? "-"}</td>
-            <td>{collectionNames(song)}</td>
-            <td>{song.length ?? "-"}</td>
-            <td>{song.notes ?? "-"}</td>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Tonart</th>
+            <th>Komponist</th>
+            <th>Arrangement</th>
+            <th>Sammlungen</th>
+            <th>Länge</th>
+            <th>Notizen</th>
+            {#if me.user_group === "admin"}
+              <th>Aktion</th>
+            {/if}
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each filteredSongs as song}
+            <tr class="clickable-row" onclick={() => openScoresModal(song)}>
+              <td>{song.id}</td>
+              <td>{song.name}</td>
+              <td>{song.tune ?? "-"}</td>
+              <td>{song.composer ?? "-"}</td>
+              <td>{song.arrangement ?? "-"}</td>
+              <td>{collectionNames(song)}</td>
+              <td>{song.length ?? "-"}</td>
+              <td>{song.notes ?? "-"}</td>
+              {#if me.user_group === "admin"}
+                <td>
+                  <div class="row">
+                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }}>Bearbeiten</button>
+                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }}>Löschen</button>
+                  </div>
+                </td>
+              {/if}
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
   </section>
 
-  <dialog bind:this={scoresModal} class="card">
+  <dialog bind:this={scoresModal} class="app-dialog">
     <div class="row" style="justify-content: space-between; align-items: center;">
       <h3 style="margin: 0;">Stimmen für {activeSong?.name}</h3>
       <button class="secondary" onclick={closeScoresModal}>Schließen</button>
@@ -447,28 +562,30 @@
       {#if activeSongScores.length === 0}
         <p>Keine PDF-Stimmen für dieses Stück verfügbar.</p>
       {:else}
-        <table>
-          <thead>
-            <tr>
-              <th>Stimme</th>
-              <th>Pfad</th>
-              <th>Aktion</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each activeSongScores as score}
+        <div class="table-wrap">
+          <table>
+            <thead>
               <tr>
-                <td>{score.instrument_name} ({score.instrument_tuning ?? "-"})</td>
-                <td>{score.storage_path}</td>
-                <td>
-                  <a href={getScoreDocumentUrl(score.id)} target="_blank" rel="noopener noreferrer">
-                    PDF öffnen
-                  </a>
-                </td>
+                <th>Stimme</th>
+                <th>Pfad</th>
+                <th>Aktion</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each activeSongScores as score}
+                <tr>
+                  <td>{score.instrument_name} ({score.instrument_tuning ?? "-"})</td>
+                  <td>{score.storage_path}</td>
+                  <td>
+                    <a href={getScoreDocumentUrl(score.id)} target="_blank" rel="noopener noreferrer">
+                      PDF öffnen
+                    </a>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     {:else if modalTab === "upload" && me.user_group === "admin"}
       <div class="card">
@@ -556,30 +673,75 @@
         <button onclick={createNewCollection}>Sammlung anlegen</button>
       </div>
       {#if collections.length > 0}
-        <table style="margin-top: 1rem;">
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Notizen</th>
-              <th>Aktion</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each collections as collection}
+        <div class="table-wrap" style="margin-top: 1rem;">
+          <table>
+            <thead>
               <tr>
-                <td><input bind:value={collection.name} /></td>
-                <td><input bind:value={collection.notes} /></td>
-                <td>
-                  <div class="row">
-                    <button onclick={() => saveCollection(collection)}>Speichern</button>
-                    <button class="warn" onclick={() => removeCollection(collection)}>Löschen</button>
-                  </div>
-                </td>
+                <th>Name</th>
+                <th>Notizen</th>
+                <th>Aktion</th>
               </tr>
-            {/each}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {#each collections as collection}
+                <tr>
+                  <td><input bind:value={collection.name} /></td>
+                  <td><input bind:value={collection.notes} /></td>
+                  <td>
+                    <div class="row">
+                      <button onclick={() => saveCollection(collection)}>Speichern</button>
+                      <button class="warn" onclick={() => removeCollection(collection)}>Löschen</button>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
       {/if}
     </section>
   {/if}
+{/if}
+
+{#if me?.user_group === "admin"}
+  <dialog bind:this={songModal} class="app-dialog">
+    <div class="row" style="justify-content: space-between; align-items: center;">
+      <h3 style="margin: 0;">{songFormMode === "edit" ? "Stück bearbeiten" : "Neues Stück anlegen"}</h3>
+      <button class="secondary" onclick={closeSongModal}>Schließen</button>
+    </div>
+    <div class="card" style="margin-top: 1rem;">
+      <div class="row">
+        <div style="flex: 1 1 220px;">
+          <label for="song-name">Name</label>
+          <input id="song-name" bind:value={songForm.name} />
+        </div>
+        <div style="flex: 1 1 160px;">
+          <label for="song-tune">Tonart</label>
+          <input id="song-tune" bind:value={songForm.tune} />
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-composer">Komponist</label>
+          <input id="song-composer" bind:value={songForm.composer} />
+        </div>
+      </div>
+      <div class="row" style="margin-top: 1rem;">
+        <div style="flex: 1 1 220px;">
+          <label for="song-arrangement">Arrangement</label>
+          <input id="song-arrangement" bind:value={songForm.arrangement} />
+        </div>
+        <div style="flex: 1 1 160px;">
+          <label for="song-length">Länge</label>
+          <input id="song-length" type="time" step="1" bind:value={songForm.length} />
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-notes">Notizen</label>
+          <input id="song-notes" bind:value={songForm.notes} />
+        </div>
+      </div>
+      <p style="margin-top: 1rem;">
+        <button onclick={saveSong}>{songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}</button>
+        <button class="secondary" onclick={resetSongForm}>Zurücksetzen</button>
+      </p>
+    </div>
+  </dialog>
 {/if}
