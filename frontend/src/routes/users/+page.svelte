@@ -7,12 +7,8 @@
     adminDeactivateUser,
     adminGetAllUsers,
     adminUpdateUser,
-    assignUserInstruments,
     changePasswordByUser,
-    createInstrument,
-    getInstruments,
     getUser,
-    getUserInstruments,
     updateUser,
     triggerSendPwResetToken,
   } from "$lib/api.js";
@@ -21,12 +17,9 @@
   let error = "";
   let ok = "";
   let allUsers = [];
-  let allInstruments = [];
-  let userInstrumentSelection = { userId: null, instrumentIds: [] };
 
   let selfForm = { clear_name: "", email: "", mm_username: "" };
   let passwordForm = { old_password: "", new_password: "" };
-  let instrumentForm = { instrument_name: "", instrument_tuning: "", notes: "" };
   let createForm = {
     user_name: "",
     clear_name: "",
@@ -51,46 +44,10 @@
       };
       if (me.user_group === "admin") {
         allUsers = await adminGetAllUsers();
-        allInstruments = await getInstruments();
-        if (allUsers.length > 0) {
-          userInstrumentSelection.userId = allUsers[0].id;
-          await refreshUserInstrumentSelection();
-        }
       }
     } catch (err) {
       error = err.message;
       goto("/");
-    }
-  }
-
-  async function refreshUserInstrumentSelection() {
-    if (!userInstrumentSelection.userId) return;
-    const currentAssignments = await getUserInstruments(userInstrumentSelection.userId);
-    userInstrumentSelection.instrumentIds = currentAssignments.map((instrument) => instrument.instrument_id);
-  }
-
-  async function saveInstrument() {
-    error = "";
-    ok = "";
-    try {
-      await createInstrument(instrumentForm);
-      instrumentForm = { instrument_name: "", instrument_tuning: "", notes: "" };
-      allInstruments = await getInstruments();
-      ok = "Instrument angelegt";
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
-  async function assignSelectedInstruments() {
-    error = "";
-    ok = "";
-    try {
-      await assignUserInstruments(userInstrumentSelection.userId, userInstrumentSelection.instrumentIds);
-      ok = "Instrumente dem Benutzer zugewiesen";
-      await refreshUserInstrumentSelection();
-    } catch (err) {
-      error = err.message;
     }
   }
 
@@ -300,33 +257,4 @@
     </div>
   </section>
 
-  <section class="card">
-    <h2>Instrumente</h2>
-    <div class="row">
-      <input placeholder="Instrument" bind:value={instrumentForm.instrument_name} />
-      <input placeholder="Stimmung" bind:value={instrumentForm.instrument_tuning} />
-      <input placeholder="Notizen" bind:value={instrumentForm.notes} />
-      <button onclick={saveInstrument}>Instrument anlegen</button>
-    </div>
-
-    <div class="row" style="margin-top: 1rem;">
-      <label for="user-instrument-picker">Benutzer</label>
-      <select id="user-instrument-picker" bind:value={userInstrumentSelection.userId} onchange={refreshUserInstrumentSelection}>
-        {#each allUsers as user}
-          <option value={user.id}>{user.user_name}</option>
-        {/each}
-      </select>
-    </div>
-
-    <div class="row" style="margin-top: 1rem; flex-wrap: wrap;">
-      {#each allInstruments as instrument}
-        <label style="display: flex; align-items: center; gap: 0.5rem; min-width: 180px;">
-          <input type="checkbox" bind:group={userInstrumentSelection.instrumentIds} value={instrument.id} />
-          <span>{instrument.instrument_name} ({instrument.instrument_tuning})</span>
-        </label>
-      {/each}
-    </div>
-
-    <p><button onclick={assignSelectedInstruments}>Zuweisungen speichern</button></p>
-  </section>
 {/if}

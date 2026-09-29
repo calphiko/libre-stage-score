@@ -3,10 +3,10 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { getUser, logout } from "$lib/api.js";
-  import { applyTheme, getStoredTheme, skeletonThemes } from "$lib/theme";
+  import { applyTheme, getStoredTheme } from "$lib/theme";
 
   let user = null;
-  let selectedTheme = getStoredTheme();
+  let isMenuOpen = false;
 
   async function refreshUser() {
     try {
@@ -16,48 +16,83 @@
     }
   }
 
+  function closeMenu() {
+    isMenuOpen = false;
+  }
+
   async function doLogout() {
     await logout();
     user = null;
+    closeMenu();
     goto("/");
-  }
-
-  function onThemeChange(event) {
-    const theme = event.currentTarget.value;
-    selectedTheme = theme;
-    applyTheme(theme);
   }
 
   onMount(() => {
     refreshUser();
-    applyTheme(selectedTheme);
+    applyTheme(getStoredTheme());
+    const onAuthChanged = () => {
+      closeMenu();
+      refreshUser();
+    };
+    window.addEventListener("auth:changed", onAuthChanged);
+    return () => {
+      window.removeEventListener("auth:changed", onAuthChanged);
+    };
   });
 </script>
 
 <header class="app-header">
   <div class="app-header__inner">
     <strong class="app-header__title">libre-stage User Service</strong>
-    <div class="app-header__nav">
+    <button
+      class="secondary app-header__burger"
+      onclick={() => (isMenuOpen = !isMenuOpen)}
+      aria-label={isMenuOpen ? "Menü schließen" : "Menü öffnen"}
+      title={isMenuOpen ? "Menü schließen" : "Menü öffnen"}
+    >
+      {isMenuOpen ? "✕" : "☰"}
+    </button>
+  </div>
+  {#if isMenuOpen}
+    <nav class="app-header__menu">
       {#if user}
         <span class="app-header__meta">Eingeloggt als: {user.user_name} ({user.user_group})</span>
-        <a href="/users">Benutzerverwaltung</a>
-        <a href="/songs">Stücke & Stimmen</a>
-        <div class="theme-switch">
-          <label class="label-text" for="theme-select">Theme</label>
-          <select id="theme-select" bind:value={selectedTheme} onchange={onThemeChange} aria-label="Theme auswählen">
-            {#each skeletonThemes as theme}
-              <option value={theme}>{theme}</option>
-            {/each}
-          </select>
-        </div>
+        {#if user.user_group === "admin"}
+          <a href="/users" onclick={closeMenu}>Benutzerverwaltung</a>
+        {/if}
+        <a href="/songs" onclick={closeMenu}>Stücke & Stimmen</a>
+        {#if user.user_group === "admin" || user.user_group === "editor"}
+          <a href="/groups" onclick={closeMenu}>Gruppenverwaltung</a>
+          <a href="/instruments" onclick={closeMenu}>Instrumentenverwaltung</a>
+        {/if}
         <button class="secondary" onclick={doLogout}>Logout</button>
       {:else}
-        <a href="/">Login</a>
+        <a href="/" onclick={closeMenu}>Login</a>
       {/if}
-    </div>
-  </div>
+    </nav>
+  {/if}
 </header>
 
 <main>
   <slot />
 </main>
+
+<style>
+  .app-header__burger {
+    min-width: 2.25rem;
+    padding: 0.2rem 0.55rem;
+    line-height: 1;
+    font-size: 1rem;
+  }
+
+  .app-header__menu {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0 1rem 1rem 1rem;
+  }
+
+  .app-header__menu .app-header__meta {
+    margin-bottom: 0.1rem;
+  }
+</style>

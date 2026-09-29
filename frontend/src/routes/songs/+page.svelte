@@ -3,21 +3,22 @@
   import { onMount } from "svelte";
   import {
     createCollection,
+    deleteScore,
     createSong,
     deleteCollection,
     deleteSong,
     getCollections,
     getInstruments,
     getScores,
-    getStorageStatus,
     getScoreDocumentUrl,
     getSongs,
     getUser,
-    rescrapeStorage,
+    previewScorePdfUpload,
+    commitScorePdfUpload,
     updateCollection,
+    updateScore,
     updateSong,
     updateSongCollections,
-    uploadScorePdf,
   } from "$lib/api.js";
 
   let me = null;
@@ -26,22 +27,23 @@
   let songs = [];
   let collections = [];
   let instruments = [];
-  let storageStatus = null;
   let songFilter = "";
   let activeSong = null;
   let activeSongScores = [];
+  let scoreInstrumentSelection = {};
+  let editingScoreId = null;
   let scoresModal = null;
-  let songModal = null;
+  let showSongModal = false;
   let modalTab = "scores";
   let selectedSongCollectionIds = [];
   let uploadForm = {
-    instrument_id: "",
-    use_new_instrument: false,
-    new_instrument_name: "",
-    new_instrument_tuning: "C",
+    default_new_instrument_tuning: "C",
     notes: "",
     file: null,
   };
+  let uploadStep = "select";
+  let uploadPreview = null;
+  let chapterMappings = [];
   let isDragActive = false;
   let collectionForm = { name: "", notes: "" };
   let songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
@@ -55,9 +57,7 @@
   }
 
   function closeSongModal() {
-    if (songModal?.open) {
-      songModal.close();
-    }
+    showSongModal = false;
     resetSongForm();
   }
 
@@ -78,12 +78,6 @@
       songs = loadedSongs;
       instruments = loadedInstruments;
       collections = normalizeCollections(loadedCollections);
-      if (me.user_group === "admin") {
-        storageStatus = await getStorageStatus();
-      }
-      if (instruments.length > 0) {
-        uploadForm.instrument_id = String(instruments[0].id);
-      }
     } catch (err) {
       error = err.message;
       goto("/");
@@ -115,6 +109,10 @@
     return normalized(path).endsWith(".pdf");
   }
 
+  function canManageSongs() {
+    return me?.user_group === "admin" || me?.user_group === "editor";
+  }
+
   async function openScoresModal(song) {
     error = "";
     ok = "";
@@ -123,7 +121,13 @@
       modalTab = "scores";
       selectedSongCollectionIds = (song.collections ?? []).map((collection) => collection.id);
       const scores = await getScores(song.id);
-      activeSongScores = scores.filter((score) => isPdfStoragePath(score.storage_path));
+      const allowedInstrumentIds = new Set(instruments.map((instrument) => Number(instrument.id)));
+      activeSongScores = scores.filter(
+        (score) => allowedInstrumentIds.has(Number(score.instrument_id)) && isPdfStoragePath(score.storage_path)
+      );
+      scoreInstrumentSelection = Object.fromEntries(
+        activeSongScores.map((score) => [score.id, String(score.instrument_id)])
+      );
       scoresModal.showModal();
     } catch (err) {
       error = err.message;
@@ -131,70 +135,168 @@
   }
 
   function closeScoresModal() {
+    if (!canLeaveUploadFlow()) return;
     if (scoresModal?.open) {
       scoresModal.close();
     }
     activeSong = null;
     activeSongScores = [];
+    scoreInstrumentSelection = {};
+    editingScoreId = null;
     selectedSongCollectionIds = [];
     uploadForm = {
-      instrument_id: instruments.length > 0 ? String(instruments[0].id) : "",
-      use_new_instrument: false,
-      new_instrument_name: "",
-      new_instrument_tuning: "C",
+      default_new_instrument_tuning: "C",
       notes: "",
       file: null,
     };
+    uploadStep = "select";
+    uploadPreview = null;
+    chapterMappings = [];
     isDragActive = false;
+  }
+
+  function hasUnfinishedUploadFlow() {
+    return modalTab === "upload" && (uploadStep === "mapping" || uploadPreview != null || uploadForm.file != null);
+  }
+
+  function canLeaveUploadFlow() {
+    if (!hasUnfinishedUploadFlow()) return true;
+    return confirm("Der Upload-Flow ist noch nicht abgeschlossen. Beim Verlassen geht dein Fortschritt verloren. Trotzdem fortfahren?");
+  }
+
+  function switchModalTab(nextTab) {
+    if (nextTab === modalTab) return;
+    if (modalTab === "upload" && nextTab !== "upload" && !canLeaveUploadFlow()) return;
+    modalTab = nextTab;
   }
 
   async function refreshActiveSongScores() {
     if (!activeSong) return;
     const scores = await getScores(activeSong.id);
-    activeSongScores = scores.filter((score) => isPdfStoragePath(score.storage_path));
+    const allowedInstrumentIds = new Set(instruments.map((instrument) => Number(instrument.id)));
+    activeSongScores = scores.filter(
+      (score) => allowedInstrumentIds.has(Number(score.instrument_id)) && isPdfStoragePath(score.storage_path)
+    );
+    scoreInstrumentSelection = Object.fromEntries(
+      activeSongScores.map((score) => [score.id, String(score.instrument_id)])
+    );
+    if (editingScoreId != null && !activeSongScores.some((score) => score.id === editingScoreId)) {
+      editingScoreId = null;
+    }
+  }
+
+  function canEditScoreAssignments() {
+    return canManageSongs();
+  }
+
+  async function removeScore(score) {
+    error = "";
+    ok = "";
+    if (!canEditScoreAssignments()) return;
+    if (!confirm(`Dieses PDF für "${score.instrument_name}" wirklich löschen?`)) return;
+    try {
+      await deleteScore(score.id);
+      ok = "PDF gelöscht.";
+      if (editingScoreId === score.id) {
+        editingScoreId = null;
+      }
+      await refreshActiveSongScores();
+      await refreshSongsAndCollections();
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  async function saveScoreInstrumentAssignment(score) {
+    error = "";
+    ok = "";
+    if (!canEditScoreAssignments()) return;
+    const selectedInstrumentId = scoreInstrumentSelection[score.id];
+    if (!selectedInstrumentId) {
+      error = "Bitte eine Stimme auswählen.";
+      return;
+    }
+    try {
+      await updateScore(score.id, {
+        song_id: score.song_id,
+        instrument_id: Number(selectedInstrumentId),
+        storage_path: score.storage_path,
+        notes: score.notes ?? null,
+      });
+      ok = "Stimmenzuordnung aktualisiert.";
+      editingScoreId = null;
+      await refreshActiveSongScores();
+      await refreshSongsAndCollections();
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  function beginScoreInstrumentEdit(score) {
+    if (!canEditScoreAssignments()) return;
+    editingScoreId = score.id;
+  }
+
+  function cancelScoreInstrumentEdit() {
+    editingScoreId = null;
   }
 
   async function refreshSongsAndCollections() {
     const [loadedSongs, loadedCollections] = await Promise.all([getSongs(), getCollections()]);
     songs = loadedSongs;
     collections = normalizeCollections(loadedCollections);
-    if (me?.user_group === "admin") {
-      storageStatus = await getStorageStatus();
-    }
     if (activeSong) {
       activeSong = songs.find((song) => song.id === activeSong.id) ?? activeSong;
       selectedSongCollectionIds = (activeSong.collections ?? []).map((collection) => collection.id);
     }
   }
 
-  function storageAlertText() {
-    if (!storageStatus?.has_changes) return "";
-    const parts = [];
-    if (storageStatus.added_files.length > 0) parts.push(`${storageStatus.added_files.length} neue Datei(en)`);
-    if (storageStatus.removed_files.length > 0) parts.push(`${storageStatus.removed_files.length} fehlende Datei(en)`);
-    if (storageStatus.changed_files.length > 0) parts.push(`${storageStatus.changed_files.length} geänderte Datei(en)`);
-    if (storageStatus.unmatched_files.length > 0) parts.push(`${storageStatus.unmatched_files.length} nicht zuordenbare Datei(en)`);
-    return parts.join(", ");
+  function chapterDisplayRange(chapter) {
+    return `${chapter.start_page + 1}-${chapter.end_page}`;
   }
 
-  async function uploadPdf() {
+  function setAllChapterImportSelection(include) {
+    chapterMappings = chapterMappings.map((mapping) => ({ ...mapping, include }));
+  }
+
+  function initializeChapterMappings(preview) {
+    chapterMappings = preview.chapters.map((chapter) => {
+      const originalChapterTitle = chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`;
+      const suggestedInstrumentId = chapter.suggested_instrument_id != null ? String(chapter.suggested_instrument_id) : "";
+      const knownInstrumentId = instruments.some((instrument) => String(instrument.id) === suggestedInstrumentId)
+        ? suggestedInstrumentId
+        : "";
+
+      if (knownInstrumentId) {
+        return {
+          chapter_index: chapter.chapter_index,
+          include: true,
+          use_new_instrument: false,
+          instrument_id: knownInstrumentId,
+          new_instrument_name: originalChapterTitle,
+          new_instrument_tuning: chapter.suggested_instrument_tuning ?? uploadForm.default_new_instrument_tuning,
+        };
+      }
+      return {
+        chapter_index: chapter.chapter_index,
+        include: true,
+        use_new_instrument: true,
+        instrument_id: instruments.length > 0 ? String(instruments[0].id) : "",
+        new_instrument_name: originalChapterTitle,
+        new_instrument_tuning: uploadForm.default_new_instrument_tuning,
+      };
+    });
+  }
+
+  async function readPdfForVoiceAssignment() {
     error = "";
     ok = "";
-    if (me?.user_group !== "admin") {
-      error = "Nur Admins dürfen PDFs hochladen.";
+    if (!canManageSongs()) {
+      error = "Nur Admins und Editoren dürfen PDFs hochladen.";
       return;
     }
     if (!activeSong) {
       error = "Kein Stück ausgewählt.";
-      return;
-    }
-    if (uploadForm.use_new_instrument) {
-      if (!uploadForm.new_instrument_name.trim()) {
-        error = "Bitte einen Namen für die neue Stimme eingeben.";
-        return;
-      }
-    } else if (!uploadForm.instrument_id) {
-      error = "Bitte eine Stimme wählen.";
       return;
     }
     if (!uploadForm.file) {
@@ -207,24 +309,66 @@
     }
 
     try {
-      await uploadScorePdf(
-        activeSong.id,
-        uploadForm.file,
-        {
-          instrumentId: uploadForm.use_new_instrument ? null : Number(uploadForm.instrument_id),
-          instrumentName: uploadForm.use_new_instrument ? uploadForm.new_instrument_name.trim() : null,
-          instrumentTuning: uploadForm.use_new_instrument ? uploadForm.new_instrument_tuning.trim() || "C" : null,
-          notes: uploadForm.notes?.trim() ? uploadForm.notes : null,
+      uploadPreview = await previewScorePdfUpload(activeSong.id, uploadForm.file);
+      uploadStep = "mapping";
+      initializeChapterMappings(uploadPreview);
+      ok = "PDF eingelesen. Bitte Stimmenzuordnung prüfen.";
+    } catch (err) {
+      error = err.message;
+    }
+  }
+
+  async function uploadPdf() {
+    error = "";
+    ok = "";
+    if (!activeSong || !uploadPreview) {
+      error = "Bitte zuerst eine PDF einlesen.";
+      return;
+    }
+    if (chapterMappings.length === 0) {
+      error = "Keine Kapitel zur Zuordnung gefunden.";
+      return;
+    }
+
+    const selectedMappings = chapterMappings.filter((mapping) => mapping.include);
+    if (selectedMappings.length === 0) {
+      error = "Bitte mindestens eine Stimme zum Import auswählen.";
+      return;
+    }
+
+    for (const mapping of selectedMappings) {
+      if (mapping.use_new_instrument) {
+        if (!mapping.new_instrument_name.trim()) {
+          error = "Bitte für alle neuen Stimmen einen Namen angeben.";
+          return;
         }
-      );
+      } else if (!mapping.instrument_id) {
+        error = "Bitte für alle Kapitel eine vorhandene Stimme auswählen.";
+        return;
+      }
+    }
+
+    try {
+      await commitScorePdfUpload({
+        song_id: activeSong.id,
+        upload_token: uploadPreview.upload_token,
+        notes: uploadForm.notes?.trim() ? uploadForm.notes.trim() : null,
+        mappings: chapterMappings.map((mapping) => ({
+          chapter_index: mapping.chapter_index,
+          include: Boolean(mapping.include),
+          instrument_id: mapping.include ? (mapping.use_new_instrument ? null : Number(mapping.instrument_id)) : null,
+          create_instrument_name: mapping.include && mapping.use_new_instrument ? mapping.new_instrument_name.trim() : null,
+          create_instrument_tuning:
+            mapping.include && mapping.use_new_instrument ? mapping.new_instrument_tuning.trim() || "C" : null,
+        })),
+      });
+
       ok = "PDF wurde hochgeladen.";
-      uploadForm.file = null;
-      uploadForm.notes = "";
-      uploadForm.use_new_instrument = false;
-      uploadForm.new_instrument_name = "";
-      uploadForm.new_instrument_tuning = "C";
+      uploadForm = { default_new_instrument_tuning: "C", notes: "", file: null };
+      uploadStep = "select";
+      uploadPreview = null;
+      chapterMappings = [];
       instruments = await getInstruments();
-      uploadForm.instrument_id = instruments.length > 0 ? String(instruments[0].id) : "";
       modalTab = "scores";
       await refreshActiveSongScores();
       await refreshSongsAndCollections();
@@ -236,27 +380,13 @@
   async function saveSongCollections() {
     error = "";
     ok = "";
-    if (me?.user_group !== "admin" || !activeSong) {
+    if (!canManageSongs() || !activeSong) {
       return;
     }
     try {
       await updateSongCollections(activeSong.id, selectedSongCollectionIds);
       ok = "Sammlungen gespeichert.";
       await refreshSongsAndCollections();
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
-  async function runStorageRescrape() {
-    error = "";
-    ok = "";
-    try {
-      const result = await rescrapeStorage();
-      storageStatus = result;
-      ok = `Scrape abgeschlossen: ${result.created_scores} neu, ${result.updated_scores} aktualisiert, ${result.removed_scores} entfernt.`;
-      await refreshSongsAndCollections();
-      await refreshActiveSongScores();
     } catch (err) {
       error = err.message;
     }
@@ -315,7 +445,7 @@
   function beginSongCreate() {
     resetSongForm();
     songFormMode = "create";
-    songModal?.showModal();
+    showSongModal = true;
   }
 
   function beginSongEdit(song) {
@@ -329,7 +459,7 @@
       length: song.length ?? "",
       notes: song.notes ?? "",
     };
-    songModal?.showModal();
+    showSongModal = true;
   }
 
   async function saveSong() {
@@ -357,6 +487,7 @@
         await createSong(payload);
         ok = "Stück angelegt.";
       }
+      showSongModal = false;
       closeSongModal();
       await refreshSongsAndCollections();
       if (activeSong) {
@@ -370,12 +501,15 @@
   async function removeSong(song) {
     error = "";
     ok = "";
-    if (!confirm(`Dieses Stück "${song.name}" wirklich löschen?`)) {
+    const confirmed = confirm(
+      `Dieses Stück "${song.name}" wirklich löschen?\n\nAchtung: Dabei werden auch alle zugehörigen PDFs aus dem Storage gelöscht.`
+    );
+    if (!confirmed) {
       return;
     }
     try {
       await deleteSong(song.id);
-      ok = "Stück gelöscht.";
+      ok = "Stück inklusive zugehöriger PDFs gelöscht.";
       if (activeSong?.id === song.id) {
         closeScoresModal();
       }
@@ -392,7 +526,13 @@
       error = "Es sind nur PDF-Dateien erlaubt.";
       return;
     }
+    if (uploadStep === "mapping" && uploadPreview && !confirm("Die aktuelle Stimmenzuordnung geht verloren. Neue PDF trotzdem auswählen?")) {
+      return;
+    }
     uploadForm.file = file;
+    uploadStep = "select";
+    uploadPreview = null;
+    chapterMappings = [];
     error = "";
   }
 
@@ -409,11 +549,19 @@
 
 <style>
   .app-dialog {
-    width: min(1200px, 96vw);
+    width: min(1500px, 96vw);
     max-width: 96vw;
     min-height: 70vh;
     max-height: 90vh;
     overflow: auto;
+  }
+
+  .mapping-hint {
+    display: block;
+    margin-top: 0.35rem;
+    color: var(--color-surface-600);
+    font-size: 0.85rem;
+    line-height: 1.4;
   }
 
   .modal-tabs {
@@ -454,6 +602,32 @@
     border: 2px solid var(--color-warning-500);
     background: var(--color-warning-50);
   }
+
+  .action-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: var(--radius-base, 0.375rem);
+    border: 1px solid transparent;
+    text-decoration: none;
+    line-height: 1;
+    font-size: 1rem;
+    cursor: pointer;
+  }
+
+  .action-open {
+    background: var(--color-primary-100);
+    color: var(--color-primary-700);
+    border-color: var(--color-primary-300);
+  }
+
+  .action-delete {
+    background: var(--color-error-100);
+    color: var(--color-error-700);
+    border-color: var(--color-error-300);
+  }
 </style>
 
 {#if error}
@@ -464,21 +638,10 @@
 {/if}
 
 {#if me}
-  {#if me.user_group === "admin" && storageStatus?.has_changes}
-    <section class="card storage-warning">
-      <h2 style="margin-top: 0;">Dateisystem-Abweichung erkannt</h2>
-      <p>Der Dateibaum passt nicht mehr zum in der Datenbank abgebildeten Stand.</p>
-      <p><strong>Details:</strong> {storageAlertText()}</p>
-      <div class="row">
-        <button onclick={runStorageRescrape}>Jetzt neu scrapen</button>
-      </div>
-    </section>
-  {/if}
-
   <section class="card">
     <div class="row" style="align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
       <h2 style="margin: 0;">Stücke</h2>
-      {#if me.user_group === "admin"}
+      {#if canManageSongs()}
         <button
           aria-label="Neues Stück anlegen"
           title="Neues Stück anlegen"
@@ -505,7 +668,7 @@
             <th>Sammlungen</th>
             <th>Länge</th>
             <th>Notizen</th>
-            {#if me.user_group === "admin"}
+            {#if canManageSongs()}
               <th>Aktion</th>
             {/if}
           </tr>
@@ -521,11 +684,11 @@
               <td>{collectionNames(song)}</td>
               <td>{song.length ?? "-"}</td>
               <td>{song.notes ?? "-"}</td>
-              {#if me.user_group === "admin"}
+              {#if canManageSongs()}
                 <td>
                   <div class="row">
-                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }}>Bearbeiten</button>
-                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }}>Löschen</button>
+                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }} aria-label="Stück bearbeiten" title="Stück bearbeiten">✎</button>
+                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }} aria-label="Stück löschen" title="Stück löschen">🗑</button>
                   </div>
                 </td>
               {/if}
@@ -542,16 +705,16 @@
       <button class="secondary" onclick={closeScoresModal}>Schließen</button>
     </div>
     <div class="modal-tabs">
-      <button class={modalTab === "scores" ? "tab-active" : "secondary"} onclick={() => (modalTab = "scores")}
+      <button class={modalTab === "scores" ? "tab-active" : "secondary"} onclick={() => switchModalTab("scores")}
         >Verfügbare Stimmen</button
       >
-      {#if me.user_group === "admin"}
-        <button class={modalTab === "upload" ? "tab-active" : "secondary"} onclick={() => (modalTab = "upload")}
+      {#if canManageSongs()}
+        <button class={modalTab === "upload" ? "tab-active" : "secondary"} onclick={() => switchModalTab("upload")}
           >PDF hochladen</button
         >
         <button
           class={modalTab === "collections" ? "tab-active" : "secondary"}
-          onclick={() => (modalTab = "collections")}
+          onclick={() => switchModalTab("collections")}
         >
           Sammlungen
         </button>
@@ -574,12 +737,60 @@
             <tbody>
               {#each activeSongScores as score}
                 <tr>
-                  <td>{score.instrument_name} ({score.instrument_tuning ?? "-"})</td>
+                  <td>
+                    {#if canEditScoreAssignments() && editingScoreId === score.id}
+                      <div class="row" style="gap: 0.5rem; flex-wrap: wrap;">
+                        <select bind:value={scoreInstrumentSelection[score.id]}>
+                          {#each instruments as instrument}
+                            <option value={instrument.id}>
+                              {instrument.instrument_name} ({instrument.instrument_tuning})
+                            </option>
+                          {/each}
+                        </select>
+                        <button class="secondary" onclick={() => saveScoreInstrumentAssignment(score)} aria-label="Zuweisung speichern" title="Zuweisung speichern">💾</button>
+                        <button class="secondary" onclick={cancelScoreInstrumentEdit} aria-label="Bearbeiten abbrechen" title="Bearbeiten abbrechen">✕</button>
+                      </div>
+                    {:else}
+                      <div class="row" style="gap: 0.5rem; flex-wrap: wrap;">
+                        <span>{score.instrument_name} ({score.instrument_tuning ?? "-"})</span>
+                        {#if canEditScoreAssignments()}
+                          <button
+                            class="secondary"
+                            onclick={() => beginScoreInstrumentEdit(score)}
+                            aria-label="Stimmenzuordnung bearbeiten"
+                            title="Stimmenzuordnung bearbeiten"
+                            style="padding: 0.15rem 0.4rem; min-width: 1.8rem; line-height: 1;"
+                          >
+                            ✎
+                          </button>
+                        {/if}
+                      </div>
+                    {/if}
+                  </td>
                   <td>{score.storage_path}</td>
                   <td>
-                    <a href={getScoreDocumentUrl(score.id)} target="_blank" rel="noopener noreferrer">
-                      PDF öffnen
-                    </a>
+                    <div class="row" style="gap: 0.5rem; flex-wrap: wrap;">
+                      <a
+                        href={getScoreDocumentUrl(score.id)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="action-icon action-open"
+                        aria-label="PDF öffnen"
+                        title="PDF öffnen"
+                      >
+                        📄
+                      </a>
+                      {#if canEditScoreAssignments()}
+                        <button
+                          class="action-icon action-delete"
+                          onclick={() => removeScore(score)}
+                          aria-label="PDF löschen"
+                          title="PDF löschen"
+                        >
+                          🗑
+                        </button>
+                      {/if}
+                    </div>
                   </td>
                 </tr>
               {/each}
@@ -587,31 +798,12 @@
           </table>
         </div>
       {/if}
-    {:else if modalTab === "upload" && me.user_group === "admin"}
+    {:else if modalTab === "upload" && canManageSongs()}
       <div class="card">
         <div class="row">
-          <div style="flex: 1 1 280px;">
-            <label for="upload-instrument">Stimme</label>
-            <p style="margin: 0 0 0.5rem 0;">
-              <label style="font-weight: normal;">
-                <input type="checkbox" bind:checked={uploadForm.use_new_instrument} />
-                Neue Stimme eingeben
-              </label>
-            </p>
-            {#if uploadForm.use_new_instrument}
-              <input placeholder="Neue Stimme (z. B. 4. Klarinette)" bind:value={uploadForm.new_instrument_name} />
-              <input
-                placeholder="Stimmung (z. B. Bb)"
-                bind:value={uploadForm.new_instrument_tuning}
-                style="margin-top: 0.5rem;"
-              />
-            {:else}
-              <select id="upload-instrument" bind:value={uploadForm.instrument_id}>
-                {#each instruments as instrument}
-                  <option value={instrument.id}>{instrument.instrument_name} ({instrument.instrument_tuning})</option>
-                {/each}
-              </select>
-            {/if}
+          <div style="flex: 1 1 260px;">
+            <label for="upload-default-tuning">Standard-Stimmung für neue Stimmen</label>
+            <input id="upload-default-tuning" placeholder="z. B. C oder Bb" bind:value={uploadForm.default_new_instrument_tuning} />
           </div>
           <div
             style="flex: 2 1 420px;"
@@ -634,17 +826,102 @@
             {#if uploadForm.file}
               <p style="margin: 0.25rem 0 0 0;"><strong>Ausgewählt:</strong> {uploadForm.file.name}</p>
             {/if}
+            {#if uploadStep === "mapping" && uploadPreview}
+              <p style="margin: 0.25rem 0 0 0;">
+                <strong>PDF eingelesen:</strong> {uploadPreview.chapters.length} Kapitel erkannt ({uploadPreview.page_count}
+                Seiten)
+              </p>
+            {/if}
           </div>
           <div style="flex: 1 1 260px;">
             <label for="upload-notes">Notizen</label>
             <input id="upload-notes" bind:value={uploadForm.notes} />
           </div>
         </div>
-        <p style="margin-top: 1rem;">
-          <button onclick={uploadPdf}>PDF hochladen</button>
-        </p>
+        {#if uploadStep === "select"}
+          <p style="margin-top: 1rem;">
+            <button onclick={readPdfForVoiceAssignment}>PDF einlesen</button>
+          </p>
+        {:else if uploadPreview}
+          <div class="table-wrap" style="margin-top: 1rem;">
+            <table>
+              <thead>
+                <tr>
+                  <th>
+                    <label style="font-weight: normal;">
+                      <input
+                        type="checkbox"
+                        checked={chapterMappings.length > 0 && chapterMappings.every((mapping) => mapping.include)}
+                        onchange={(event) => setAllChapterImportSelection(event.currentTarget.checked)}
+                      />
+                      Alle
+                    </label>
+                  </th>
+                  <th>Kapitel</th>
+                  <th>Seiten</th>
+                  <th>Zuordnung</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each uploadPreview.chapters as chapter, index (chapter.chapter_index)}
+                  <tr>
+                    <td>
+                      <input type="checkbox" bind:checked={chapterMappings[index].include} />
+                    </td>
+                    <td>{chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`}</td>
+                    <td>{chapterDisplayRange(chapter)}</td>
+                    <td>
+                      {#if chapterMappings[index].include}
+                        <div>
+                          <label style="font-weight: normal;">
+                            <input type="checkbox" bind:checked={chapterMappings[index].use_new_instrument} />
+                            Neue Stimme anlegen
+                          </label>
+                        </div>
+                        {#if chapterMappings[index].use_new_instrument}
+                          <input
+                            style="margin-top: 0.25rem;"
+                            placeholder="Neue Stimme"
+                            bind:value={chapterMappings[index].new_instrument_name}
+                          />
+                          <input
+                            style="margin-top: 0.25rem;"
+                            placeholder="Stimmung"
+                            bind:value={chapterMappings[index].new_instrument_tuning}
+                          />
+                        {:else}
+                          <select style="margin-top: 0.25rem;" bind:value={chapterMappings[index].instrument_id}>
+                            <option value="">-- bitte wählen --</option>
+                            {#each instruments as instrument}
+                              <option value={String(instrument.id)}>
+                                {instrument.instrument_name} ({instrument.instrument_tuning})
+                              </option>
+                            {/each}
+                          </select>
+                        {/if}
+                        {#if uploadPreview.chapters[index]?.suggested_instrument_name}
+                          <span class="mapping-hint">
+                            Vorschlag: {uploadPreview.chapters[index].suggested_instrument_name}
+                            {#if uploadPreview.chapters[index].suggested_instrument_tuning}
+                              ({uploadPreview.chapters[index].suggested_instrument_tuning})
+                            {/if}
+                          </span>
+                        {/if}
+                      {:else}
+                        <span>-</span>
+                      {/if}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <p style="margin-top: 1rem;">
+            <button onclick={uploadPdf}>PDF hochladen</button>
+          </p>
+        {/if}
       </div>
-    {:else if modalTab === "collections" && me.user_group === "admin"}
+    {:else if modalTab === "collections" && canManageSongs()}
       <div class="card">
         <h4>Sammlungen für dieses Stück</h4>
         {#if collections.length === 0}
@@ -664,13 +941,13 @@
     {/if}
   </dialog>
 
-  {#if me.user_group === "admin"}
+  {#if canManageSongs()}
     <section class="card">
       <h2>Sammlungen verwalten</h2>
       <div class="row">
         <input placeholder="Neue Sammlung" bind:value={collectionForm.name} />
         <input placeholder="Notizen" bind:value={collectionForm.notes} />
-        <button onclick={createNewCollection}>Sammlung anlegen</button>
+        <button onclick={createNewCollection} aria-label="Sammlung anlegen" title="Sammlung anlegen">💾 Sammlung anlegen</button>
       </div>
       {#if collections.length > 0}
         <div class="table-wrap" style="margin-top: 1rem;">
@@ -689,8 +966,8 @@
                   <td><input bind:value={collection.notes} /></td>
                   <td>
                     <div class="row">
-                      <button onclick={() => saveCollection(collection)}>Speichern</button>
-                      <button class="warn" onclick={() => removeCollection(collection)}>Löschen</button>
+                      <button onclick={() => saveCollection(collection)} aria-label="Sammlung speichern" title="Sammlung speichern">💾</button>
+                      <button class="warn" onclick={() => removeCollection(collection)} aria-label="Sammlung löschen" title="Sammlung löschen">🗑</button>
                     </div>
                   </td>
                 </tr>
@@ -703,8 +980,8 @@
   {/if}
 {/if}
 
-{#if me?.user_group === "admin"}
-  <dialog bind:this={songModal} class="app-dialog">
+{#if canManageSongs() && showSongModal}
+  <dialog open class="app-dialog">
     <div class="row" style="justify-content: space-between; align-items: center;">
       <h3 style="margin: 0;">{songFormMode === "edit" ? "Stück bearbeiten" : "Neues Stück anlegen"}</h3>
       <button class="secondary" onclick={closeSongModal}>Schließen</button>
@@ -739,8 +1016,8 @@
         </div>
       </div>
       <p style="margin-top: 1rem;">
-        <button onclick={saveSong}>{songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}</button>
-        <button class="secondary" onclick={resetSongForm}>Zurücksetzen</button>
+        <button onclick={saveSong} aria-label={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"} title={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}>💾 {songFormMode === "edit" ? "Speichern" : "Anlegen"}</button>
+        <button class="secondary" onclick={resetSongForm} aria-label="Formular zurücksetzen" title="Formular zurücksetzen">↺ Zurücksetzen</button>
       </p>
     </div>
   </dialog>

@@ -11,7 +11,7 @@
   onMount(async () => {
     try {
       await getUser();
-      goto("/users");
+      goto("/songs");
     } catch (_err) {}
   });
 
@@ -21,7 +21,7 @@
     error = "";
     try {
       await login(username, password);
-      goto("/users");
+      goto("/songs");
     } catch (err) {
       error = err.message;
     } finally {

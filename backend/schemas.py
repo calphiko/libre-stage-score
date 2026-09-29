@@ -64,6 +64,11 @@ class UserGroupMembershipUpdate(BaseModel):
     group_ids: list[int] = Field(default_factory=list)
 
 
+class GroupInstrumentMembershipUpdate(BaseModel):
+    instrument_ids: list[int] = Field(default_factory=list)
+    notes: str | None = None
+
+
 class UserOut(BaseModel):
     id: int
     user_name: str
@@ -92,6 +97,10 @@ class InstrumentCreate(BaseModel):
     notes: str | None = None
 
 
+class InstrumentUpdate(InstrumentCreate):
+    pass
+
+
 class InstrumentOut(InstrumentCreate):
     id: int
 
@@ -106,6 +115,17 @@ class AssignInstrumentRequest(BaseModel):
 class UserInstrumentOut(BaseModel):
     id: int
     user_id: int
+    instrument_id: int
+    instrument_name: str | None = None
+    instrument_tuning: str | None = None
+    notes: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GroupInstrumentOut(BaseModel):
+    id: int
+    group_id: int
     instrument_id: int
     instrument_name: str | None = None
     instrument_tuning: str | None = None
@@ -184,6 +204,39 @@ class ScoreOut(ScoreBase):
     instrument_tuning: str | None = None
 
     model_config = {"from_attributes": True}
+
+
+class ScoreUploadChapterOut(BaseModel):
+    chapter_index: int
+    chapter_title: str
+    original_chapter_title: str | None = None
+    start_page: int
+    end_page: int
+    suggested_instrument_id: int | None = None
+    suggested_instrument_name: str | None = None
+    suggested_instrument_tuning: str | None = None
+
+
+class ScoreUploadPreviewOut(BaseModel):
+    upload_token: str
+    source_filename: str
+    page_count: int
+    chapters: list[ScoreUploadChapterOut] = Field(default_factory=list)
+
+
+class ScoreUploadMappingIn(BaseModel):
+    chapter_index: int
+    include: bool = True
+    instrument_id: int | None = None
+    create_instrument_name: str | None = Field(default=None, max_length=128)
+    create_instrument_tuning: str | None = Field(default=None, max_length=32)
+
+
+class ScoreUploadCommitRequest(BaseModel):
+    song_id: int
+    upload_token: str = Field(..., min_length=8, max_length=255)
+    notes: str | None = None
+    mappings: list[ScoreUploadMappingIn] = Field(default_factory=list)
 
 
 class StorageStatusOut(BaseModel):

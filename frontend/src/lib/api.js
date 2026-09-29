@@ -2,6 +2,11 @@ export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 let csrfTokenCache = null;
 
+function notifyAuthChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("auth:changed"));
+}
+
 function getCookieValue(name) {
   if (typeof document === "undefined") return null;
   const value = `; ${document.cookie}`;
@@ -87,6 +92,7 @@ export async function login(username, password) {
   }
   const payload = await res.json();
   rememberCsrfToken(payload.csrf_token);
+  notifyAuthChanged();
   return payload;
 }
 
@@ -99,6 +105,7 @@ export async function logout() {
     credentials: "include",
     headers,
   });
+  notifyAuthChanged();
 }
 
 export async function getUser() {
@@ -186,6 +193,87 @@ export async function createInstrument(data) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updateInstrument(instrumentId, data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/instruments/${instrumentId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteInstrument(instrumentId) {
+  const res = await fetchWithAuth(`${API_URL}/admin/instruments/${instrumentId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  return res.json();
+}
+
+export async function getGroups() {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups`, { method: "GET" });
+  return res.json();
+}
+
+export async function createGroup(data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updateGroup(groupId, data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups/${groupId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteGroup(groupId) {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups/${groupId}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+  });
+  return res.json();
+}
+
+export async function getAssignableUsers() {
+  const res = await fetchWithAuth(`${API_URL}/admin/users/assignable`, { method: "GET" });
+  return res.json();
+}
+
+export async function getUserGroups(userId) {
+  const res = await fetchWithAuth(`${API_URL}/admin/users/${userId}/groups`, { method: "GET" });
+  return res.json();
+}
+
+export async function updateUserGroups(userId, groupIds) {
+  const res = await fetchWithAuth(`${API_URL}/admin/users/${userId}/groups`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ group_ids: groupIds }),
+  });
+  return res.json();
+}
+
+export async function getGroupInstruments(groupId) {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups/${groupId}/instruments`, { method: "GET" });
+  return res.json();
+}
+
+export async function updateGroupInstruments(groupId, instrumentIds, notes = null) {
+  const res = await fetchWithAuth(`${API_URL}/admin/groups/${groupId}/instruments`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ instrument_ids: instrumentIds, notes }),
   });
   return res.json();
 }
@@ -334,6 +422,26 @@ export async function uploadScorePdf(songId, file, options = {}) {
   const res = await fetchWithAuth(`${API_URL}/admin/scores/upload`, {
     method: "POST",
     body: formData,
+  });
+  return res.json();
+}
+
+export async function previewScorePdfUpload(songId, file) {
+  const formData = new FormData();
+  formData.append("song_id", String(songId));
+  formData.append("file", file);
+  const res = await fetchWithAuth(`${API_URL}/admin/scores/upload/preview`, {
+    method: "POST",
+    body: formData,
+  });
+  return res.json();
+}
+
+export async function commitScorePdfUpload(data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/scores/upload/commit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
   });
   return res.json();
 }

@@ -250,6 +250,29 @@ def user_can_access_document(db: Session, current_user: dict, document_type: str
     ):
         return True
 
+    if document_type == "score":
+        score = db.query(models.Score).filter(models.Score.id == document_id).first()
+        if score is not None:
+            if (
+                db.query(models.UserInstrument.id)
+                .filter(models.UserInstrument.user_id == user_id, models.UserInstrument.instrument_id == score.instrument_id)
+                .first()
+                is not None
+            ):
+                return True
+
+            group_ids = user_group_ids(db, user_id)
+            if group_ids and (
+                db.query(models.GroupInstrumentMembership.id)
+                .filter(
+                    models.GroupInstrumentMembership.instrument_id == score.instrument_id,
+                    models.GroupInstrumentMembership.group_id.in_(sorted(group_ids)),
+                )
+                .first()
+                is not None
+            ):
+                return True
+
     group_ids = user_group_ids(db, user_id)
     if not group_ids:
         return False

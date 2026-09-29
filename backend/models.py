@@ -19,6 +19,11 @@ class Group(Base):
         back_populates="group",
         cascade="all, delete-orphan",
     )
+    instrument_memberships: Mapped[list["GroupInstrumentMembership"]] = relationship(
+        "GroupInstrumentMembership",
+        back_populates="group",
+        cascade="all, delete-orphan",
+    )
     document_accesses: Mapped[list["DocumentAccess"]] = relationship(
         "DocumentAccess",
         back_populates="group",
@@ -28,6 +33,10 @@ class Group(Base):
     @property
     def users(self) -> list["User"]:
         return [membership.user for membership in self.user_memberships if membership.user is not None]
+
+    @property
+    def instruments(self) -> list["Instrument"]:
+        return [membership.instrument for membership in self.instrument_memberships if membership.instrument is not None]
 
 
 class User(Base):
@@ -137,6 +146,11 @@ class Instrument(Base):
         back_populates="instrument",
         cascade="all, delete-orphan",
     )
+    group_memberships: Mapped[list["GroupInstrumentMembership"]] = relationship(
+        "GroupInstrumentMembership",
+        back_populates="instrument",
+        cascade="all, delete-orphan",
+    )
 
 
 class SongCollection(Base):
@@ -202,3 +216,16 @@ class UserInstrument(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="user_instruments")
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="user_instruments")
+
+
+class GroupInstrumentMembership(Base):
+    __tablename__ = "group_instruments"
+    __table_args__ = (UniqueConstraint("group_id", "instrument_id", name="uq_group_instrument"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    group_id: Mapped[int] = mapped_column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), nullable=False)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id", ondelete="CASCADE"), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    group: Mapped["Group"] = relationship("Group", back_populates="instrument_memberships")
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="group_memberships")

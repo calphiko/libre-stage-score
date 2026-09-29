@@ -33,12 +33,15 @@ def run() -> None:
     models.Base.metadata.create_all(bind=engine)
 
     db.query(models.SongCollection).delete()
+    db.query(models.GroupInstrumentMembership).delete()
+    db.query(models.UserGroupMembership).delete()
     db.query(models.UserInstrument).delete()
     db.query(models.Score).delete()
     db.query(models.RefreshToken).delete()
     db.query(models.TokenBlacklist).delete()
     db.query(models.UsedPasswordResetToken).delete()
     db.query(models.Collection).delete()
+    db.query(models.Group).delete()
     db.query(models.Song).delete()
     db.query(models.Instrument).delete()
     db.query(models.User).delete()
@@ -58,6 +61,7 @@ def run() -> None:
             user_group="admin",
             email="admin@example.com",
             clear_name="Admin User",
+            musician=False,
             status="active",
         ),
         models.User(
@@ -66,6 +70,7 @@ def run() -> None:
             user_group="editor",
             email="alice@example.com",
             clear_name="Alice",
+            musician=True,
             status="active",
         ),
         models.User(
@@ -74,6 +79,7 @@ def run() -> None:
             user_group="editor",
             email="bob@example.com",
             clear_name="Bob",
+            musician=True,
             status="active",
         ),
         models.User(
@@ -82,6 +88,7 @@ def run() -> None:
             user_group="user",
             email="carol@example.com",
             clear_name="Carol",
+            musician=True,
             status="active",
         ),
         models.User(
@@ -90,6 +97,7 @@ def run() -> None:
             user_group="user",
             email="dave@example.com",
             clear_name="Dave",
+            musician=True,
             status="active",
         ),
     ]
@@ -98,45 +106,45 @@ def run() -> None:
     db.flush()
 
     instruments = [
-        models.Instrument(instrument_name="Piccoloflöte", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Flöte", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Flöte", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="3. Flöte", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Oboe", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Oboe", instrument_tuning="C", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Klarinette", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Klarinette", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="Bassklarinette", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Alt-Saxophon", instrument_tuning="Eb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Alt-Saxophon", instrument_tuning="Eb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="Tenor-Saxophon", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Trompete", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Trompete", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="3. Trompete", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Flügelhorn", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Flügelhorn", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Horn", instrument_tuning="F", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Horn", instrument_tuning="F", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="3. Horn", instrument_tuning="F", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Tenorhorn", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Tenorhorn", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="1. Posaune", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="2. Posaune", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="3. Posaune", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="Euphonium", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="Tuba", instrument_tuning="Bb", notes="Demo-Instrument"),
-        models.Instrument(instrument_name="Schlagzeug", instrument_tuning="Standard", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Piccoloflöte 1", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Flöte 1", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Flöte 2", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Flöte 3", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Oboe 1", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Oboe 2", instrument_tuning="C", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Klarinette 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Klarinette 2", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Bassklarinette 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Alt-Saxophon 1", instrument_tuning="Eb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Alt-Saxophon 2", instrument_tuning="Eb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Tenor-Saxophon 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Trompete 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Trompete 2", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Trompete 3", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Flügelhorn 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Flügelhorn 2", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Horn 1", instrument_tuning="F", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Horn 2", instrument_tuning="F", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Horn 3", instrument_tuning="F", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Tenorhorn 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Tenorhorn 2", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Posaune 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Posaune 2", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Posaune 3", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Euphonium 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Tuba 1", instrument_tuning="Bb", notes="Demo-Instrument"),
+        models.Instrument(instrument_name="Schlagzeug 1", instrument_tuning="Standard", notes="Demo-Instrument"),
     ]
     db.add_all(instruments)
     db.flush()
 
     user_lookup = {user.user_name: user for user in users}
     assignments = [
-        ("admin", ["1. Trompete", "1. Horn", "1. Tenorhorn", "Tuba"]),
-        ("alice", ["1. Flöte", "2. Flöte", "1. Oboe", "1. Klarinette"]),
-        ("bob", ["2. Klarinette", "1. Posaune", "2. Posaune", "Schlagzeug"]),
-        ("carol", ["1. Alt-Saxophon", "2. Horn", "3. Trompete"]),
-        ("dave", ["2. Trompete", "Euphonium", "2. Tenorhorn", "Schlagzeug"]),
+        ("admin", ["Trompete 1", "Horn 1", "Tenorhorn 1", "Tuba 1"]),
+        ("alice", ["Flöte 1", "Flöte 2", "Oboe 1", "Klarinette 1"]),
+        ("bob", ["Klarinette 2", "Posaune 1", "Posaune 2", "Schlagzeug 1"]),
+        ("carol", ["Alt-Saxophon 1", "Horn 2", "Trompete 3"]),
+        ("dave", ["Trompete 2", "Euphonium 1", "Tenorhorn 2", "Schlagzeug 1"]),
     ]
 
     instrument_lookup = {instrument.instrument_name: instrument for instrument in instruments}
@@ -148,6 +156,55 @@ def run() -> None:
                     user_id=user.id,
                     instrument_id=instrument_lookup[name].id,
                     notes="Demo-Zuweisung",
+                )
+            )
+
+    groups = [
+        models.Group(name="Flöten", notes="Flöten-Register inkl. Piccolo"),
+        models.Group(name="Oboen", notes="Oboen-Register"),
+        models.Group(name="Klarinetten", notes="Klarinetten-Register"),
+        models.Group(name="Saxophone", notes="Saxophon-Register"),
+        models.Group(name="Hohes Blech", notes="Trompeten und Flügelhörner"),
+        models.Group(name="Hörner", notes="Horn-Register"),
+        models.Group(name="Tiefes Blech", notes="Tenorhörner, Euphonium, Posaunen und Tuba"),
+        models.Group(name="Schlagwerk", notes="Schlagwerk"),
+    ]
+    db.add_all(groups)
+    db.flush()
+
+    group_lookup = {group.name: group for group in groups}
+    group_instrument_assignments = {
+        "Flöten": ["Piccoloflöte 1", "Flöte 1", "Flöte 2", "Flöte 3"],
+        "Oboen": ["Oboe 1", "Oboe 2"],
+        "Klarinetten": ["Klarinette 1", "Klarinette 2", "Bassklarinette 1"],
+        "Saxophone": ["Alt-Saxophon 1", "Alt-Saxophon 2", "Tenor-Saxophon 1"],
+        "Hohes Blech": [
+            "Trompete 1",
+            "Trompete 2",
+            "Trompete 3",
+            "Flügelhorn 1",
+            "Flügelhorn 2",
+        ],
+        "Hörner": ["Horn 1", "Horn 2", "Horn 3"],
+        "Tiefes Blech": [
+            "Tenorhorn 1",
+            "Tenorhorn 2",
+            "Euphonium 1",
+            "Posaune 1",
+            "Posaune 2",
+            "Posaune 3",
+            "Tuba 1",
+        ],
+        "Schlagwerk": ["Schlagzeug 1"],
+    }
+    for group_name, instrument_names in group_instrument_assignments.items():
+        group = group_lookup[group_name]
+        for instrument_name in instrument_names:
+            db.add(
+                models.GroupInstrumentMembership(
+                    group_id=group.id,
+                    instrument_id=instrument_lookup[instrument_name].id,
+                    notes="Demo-Registerzuordnung",
                 )
             )
 
@@ -170,10 +227,10 @@ def run() -> None:
     songs[1].collections.extend([collections[2]])
 
     seeded_scores = [
-        (songs[0], instrument_lookup["1. Trompete"], "Highland_Cathedral/1._Trompete.pdf", "Lead"),
-        (songs[0], instrument_lookup["1. Tenorhorn"], "Highland_Cathedral/1._Tenorhorn.pdf", "Mittelstimme"),
-        (songs[1], instrument_lookup["1. Flöte"], "Amazing_Grace/1._Floete.pdf", "Melodie"),
-        (songs[1], instrument_lookup["Euphonium"], "Amazing_Grace/Euphonium.pdf", "Begleitung"),
+        (songs[0], instrument_lookup["Trompete 1"], "Highland_Cathedral/Trompete_1.pdf", "Lead"),
+        (songs[0], instrument_lookup["Tenorhorn 1"], "Highland_Cathedral/Tenorhorn_1.pdf", "Mittelstimme"),
+        (songs[1], instrument_lookup["Flöte 1"], "Amazing_Grace/Floete_1.pdf", "Melodie"),
+        (songs[1], instrument_lookup["Euphonium 1"], "Amazing_Grace/Euphonium_1.pdf", "Begleitung"),
     ]
     for song, instrument, storage_path, notes in seeded_scores:
         file_hash = _create_demo_pdf(admin.SCORES_UPLOAD_DIR / storage_path)
@@ -190,6 +247,7 @@ def run() -> None:
     db.commit()
     print("Seeded demo users: admin, alice, bob, carol, dave")
     print("Seeded demo instruments and user assignments")
+    print("Seeded demo register groups and group instrument assignments")
     print("Seeded demo collections and song assignments")
     print("Seeded demo songs and scores")
 
