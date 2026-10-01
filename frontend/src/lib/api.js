@@ -183,8 +183,9 @@ export async function triggerSendPwResetToken(userId) {
   return res.json();
 }
 
-export async function getInstruments() {
-  const res = await fetchWithAuth(`${API_URL}/admin/instruments`, { method: "GET" });
+export async function getInstruments(view = "user") {
+  const params = new URLSearchParams({ view });
+  const res = await fetchWithAuth(`${API_URL}/admin/instruments?${params.toString()}`, { method: "GET" });
   return res.json();
 }
 
@@ -331,8 +332,9 @@ export async function removeUserInstrument(userId, instrumentId) {
   return res.json();
 }
 
-export async function getSongs() {
-  const res = await fetchWithAuth(`${API_URL}/admin/songs`, { method: "GET" });
+export async function getSongs(view = "editor") {
+  const params = new URLSearchParams({ view });
+  const res = await fetchWithAuth(`${API_URL}/admin/songs?${params.toString()}`, { method: "GET" });
   return res.json();
 }
 
@@ -371,8 +373,10 @@ export async function updateSongCollections(songId, collectionIds) {
   return res.json();
 }
 
-export async function getScores(songId = null) {
-  const url = songId ? `${API_URL}/admin/scores?song_id=${songId}` : `${API_URL}/admin/scores`;
+export async function getScores(songId = null, view = "editor") {
+  const params = new URLSearchParams({ view });
+  if (songId !== null && songId !== undefined) params.set("song_id", String(songId));
+  const url = `${API_URL}/admin/scores?${params.toString()}`;
   const res = await fetchWithAuth(url, { method: "GET" });
   return res.json();
 }
@@ -437,8 +441,27 @@ export async function previewScorePdfUpload(songId, file) {
   return res.json();
 }
 
+export async function previewNewSongPdfUpload(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetchWithAuth(`${API_URL}/admin/songs/upload/preview`, {
+    method: "POST",
+    body: formData,
+  });
+  return res.json();
+}
+
 export async function commitScorePdfUpload(data) {
   const res = await fetchWithAuth(`${API_URL}/admin/scores/upload/commit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function commitNewSongPdfUpload(data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/songs/upload/commit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),

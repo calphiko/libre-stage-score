@@ -1,12 +1,41 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from backend import auth, models
+from backend import database as database_module
 from backend.database import SessionLocal
 from backend.main import app
 from backend.routers import admin
+
+import backend.main as main_module
+
+
+@pytest.fixture(autouse=True)
+def use_in_memory_database(monkeypatch):
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    testing_session_local = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    models.Base.metadata.create_all(bind=engine)
+
+    monkeypatch.setattr(database_module, "engine", engine)
+    monkeypatch.setattr(database_module, "SessionLocal", testing_session_local)
+    monkeypatch.setattr(auth.database, "engine", engine)
+    monkeypatch.setattr(auth.database, "SessionLocal", testing_session_local)
+    monkeypatch.setattr(main_module, "engine", engine)
+    globals()["SessionLocal"] = testing_session_local
+
+    yield
+
+    models.Base.metadata.drop_all(bind=engine)
 
 
 client = TestClient(app)
@@ -16,6 +45,79 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_extract_song_metadata_from_pdf_falls_back_to_ocr_when_text_is_empty(monkeypatch, tmp_path):
+    class DummyPage:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class DummyReader:
+        def __init__(self, texts):
+            self.pages = [DummyPage(text) for text in texts]
+            self.metadata = None
+
+    pdf_path = tmp_path / "ocr_scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4\n")
+    reader = DummyReader(["", ""])
+    monkeypatch.setattr(admin, "_ocr_pdf_first_pages", lambda path, page_limit=2: "THE GREAT SYMPHONY\nArrangeur: Max Muster\nKomponist: Anna Beispiel\n")
+
+    metadata = admin._extract_song_metadata_from_pdf(reader, "ocr_scan.pdf", source_file=pdf_path)
+
+    assert metadata["name"] == "THE GREAT SYMPHONY"
+    assert metadata["composer"] == "Anna Beispiel"
+    assert metadata["arrangement"] == "Max Muster"
+
+
+def test_extract_song_metadata_from_pdf_prefers_title_and_arrangement_lines():
+    class DummyPage:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class DummyReader:
+        def __init__(self, texts):
+            self.pages = [DummyPage(text) for text in texts]
+            self.metadata = None
+
+    reader = DummyReader([
+        "Arrangement: Max Muster\nComposer: Anna Beispiel\n\nThe Great Symphony\n",
+        "Page 2\n",
+    ])
+    metadata = admin._extract_song_metadata_from_pdf(reader, "random_file_name.pdf")
+
+    assert metadata["name"] == "The Great Symphony"
+    assert metadata["composer"] == "Anna Beispiel"
+    assert metadata["arrangement"] == "Max Muster"
+
+
+def test_extract_song_metadata_from_pdf_handles_first_title_line_and_arrangeur_label():
+    class DummyPage:
+        def __init__(self, text):
+            self._text = text
+
+        def extract_text(self):
+            return self._text
+
+    class DummyReader:
+        def __init__(self, texts):
+            self.pages = [DummyPage(text) for text in texts]
+            self.metadata = None
+
+    reader = DummyReader([
+        "THE GREAT SYMPHONY\nArrangeur: Max Muster\nKomponist: Anna Beispiel\n",
+        "Page 2\n",
+    ])
+    metadata = admin._extract_song_metadata_from_pdf(reader, "random_file_name.pdf")
+
+    assert metadata["name"] == "THE GREAT SYMPHONY"
+    assert metadata["composer"] == "Anna Beispiel"
+    assert metadata["arrangement"] == "Max Muster"
 
 
 def test_match_instrument_by_outline_title_does_not_confuse_same_number_different_family():
@@ -43,6 +145,7 @@ def test_match_instrument_by_outline_title_handles_aliases_and_numbers():
             "Piccoloflöte 1 C": "C",
             "Klarinette 2 Bb": "Bb",
             "Alt-Saxophon 1 Eb": "Eb",
+            "Fagott 1 C": "C",
         }.items()
     }
     normalized = {admin._normalize_part_name(name): instrument for name, instrument in instruments.items()}
@@ -52,6 +155,122 @@ def test_match_instrument_by_outline_title_handles_aliases_and_numbers():
     assert admin._match_instrument_by_outline_title("Klar. 2", normalized).instrument_name == "Klarinette 2 Bb"
     assert admin._match_instrument_by_outline_title("Alt-Sax 1", normalized).instrument_name == "Alt-Saxophon 1 Eb"
     assert admin._match_instrument_by_outline_title("Flöte 2", normalized).instrument_name == "Flöte 2 C"
+    assert admin._match_instrument_by_outline_title("Clarinet 2", normalized).instrument_name == "Klarinette 2 Bb"
+    assert admin._match_instrument_by_outline_title("Alto Saxophone 1", normalized).instrument_name == "Alt-Saxophon 1 Eb"
+    assert admin._match_instrument_by_outline_title("Flute 1", normalized).instrument_name == "Flöte 1 C"
+    assert admin._match_instrument_by_outline_title("Bassoon 1", normalized).instrument_name == "Fagott 1 C"
+
+
+def test_editor_in_user_mode_only_sees_assigned_instruments():
+    db = SessionLocal()
+    username = "editor_user_mode"
+    group_name = "Klarinetten"
+    allowed_instrument_name = "Klarinette 1 C"
+    blocked_instrument_name = "Flöte 1 C"
+    try:
+        existing_user = db.query(models.User).filter(models.User.user_name == username).first()
+        if existing_user:
+            db.query(models.UserGroupMembership).filter(models.UserGroupMembership.user_id == existing_user.id).delete()
+            db.delete(existing_user)
+            db.commit()
+
+        group = db.query(models.Group).filter(models.Group.name == group_name).first()
+        if group:
+            db.query(models.GroupInstrumentMembership).filter(models.GroupInstrumentMembership.group_id == group.id).delete()
+            db.delete(group)
+            db.commit()
+
+        group = models.Group(name=group_name, notes=None)
+        allowed_instrument = models.Instrument(instrument_name=allowed_instrument_name, instrument_tuning="C", notes=None)
+        blocked_instrument = models.Instrument(instrument_name=blocked_instrument_name, instrument_tuning="C", notes=None)
+        user = models.User(
+            user_name=username,
+            user_pw="hashedpw",
+            user_group="editor",
+            email="editor-user-mode@example.com",
+            clear_name="Editor User Mode",
+            musician=True,
+            status="active",
+        )
+        db.add_all([group, allowed_instrument, blocked_instrument, user])
+        db.flush()
+        db.add(models.UserGroupMembership(user_id=user.id, group_id=group.id))
+        db.add(models.GroupInstrumentMembership(group_id=group.id, instrument_id=allowed_instrument.id))
+        db.commit()
+
+        token = auth.create_access_token({"sub": user.user_name, "role": user.user_group})
+        response = client.get("/admin/instruments?view=user", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        returned_names = [entry["instrument_name"] for entry in response.json()]
+        assert allowed_instrument_name in returned_names
+        assert blocked_instrument_name not in returned_names
+    finally:
+        db.rollback()
+        user = db.query(models.User).filter(models.User.user_name == username).first()
+        if user:
+            db.query(models.UserGroupMembership).filter(models.UserGroupMembership.user_id == user.id).delete()
+            db.delete(user)
+        group = db.query(models.Group).filter(models.Group.name == group_name).first()
+        if group:
+            db.query(models.GroupInstrumentMembership).filter(models.GroupInstrumentMembership.group_id == group.id).delete()
+            db.delete(group)
+        for instrument_name in [allowed_instrument_name, blocked_instrument_name]:
+            instrument = db.query(models.Instrument).filter(models.Instrument.instrument_name == instrument_name).first()
+            if instrument:
+                db.delete(instrument)
+        db.commit()
+        db.close()
+
+
+def test_user_without_group_cannot_access_scores_via_direct_user_instrument_assignment():
+    db = SessionLocal()
+    username = "group_only_user"
+    instrument_name = "Solo Flöte"
+    try:
+        existing_user = db.query(models.User).filter(models.User.user_name == username).first()
+        if existing_user:
+            db.query(models.UserInstrument).filter(models.UserInstrument.user_id == existing_user.id).delete()
+            db.delete(existing_user)
+            db.commit()
+
+        user = models.User(
+            user_name=username,
+            user_pw="hashedpw",
+            user_group="user",
+            email="group-only@example.com",
+            clear_name="Group Only User",
+            musician=True,
+            status="active",
+        )
+        instrument = models.Instrument(instrument_name=instrument_name, instrument_tuning="C", notes=None)
+        song = models.Song(name="Solo Access Song", tune="C", composer="Composer", arrangement=None, length=None, notes=None)
+        db.add_all([user, instrument, song])
+        db.flush()
+        db.add(models.UserInstrument(user_id=user.id, instrument_id=instrument.id, notes="Direkt"))
+        db.add(models.Score(song_id=song.id, instrument_id=instrument.id, storage_path="group-only/solo.pdf", file_hash="c", notes=None))
+        db.commit()
+
+        current = {"user_id": user.id, "user_name": user.user_name, "user_group": user.user_group}
+        assert auth.user_can_access_document(db, current, "score", song_id := song.id) is False
+        token = auth.create_access_token({"sub": user.user_name, "role": user.user_group})
+        response = client.get(f"/admin/scores?song_id={song.id}", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        db.rollback()
+        user = db.query(models.User).filter(models.User.user_name == username).first()
+        if user:
+            db.query(models.UserInstrument).filter(models.UserInstrument.user_id == user.id).delete()
+            db.delete(user)
+        instrument = db.query(models.Instrument).filter(models.Instrument.instrument_name == instrument_name).first()
+        if instrument:
+            db.delete(instrument)
+        song = db.query(models.Song).filter(models.Song.name == "Solo Access Song").first()
+        if song:
+            db.query(models.Score).filter(models.Score.song_id == song.id).delete()
+            db.delete(song)
+        db.commit()
+        db.close()
 
 
 def test_user_instrument_backpopulation():
@@ -233,7 +452,7 @@ def test_user_can_access_score_when_group_has_instrument():
         db.close()
 
 
-def test_user_can_access_score_when_directly_assigned_to_instrument():
+def test_user_without_group_cannot_access_score_via_direct_instrument_assignment():
     db = SessionLocal()
     username = "document_direct_user"
     try:
@@ -262,7 +481,7 @@ def test_user_can_access_score_when_directly_assigned_to_instrument():
         db.commit()
 
         current = {"user_id": user.id, "user_name": user.user_name, "user_group": user.user_group}
-        assert auth.user_can_access_document(db, current, "score", score.id) is True
+        assert auth.user_can_access_document(db, current, "score", score.id) is False
         assert auth.user_can_access_document(db, current, "score", score.id + 9999) is False
     finally:
         db.rollback()

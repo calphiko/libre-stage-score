@@ -4,6 +4,8 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +50,30 @@ def _score_to_out(score: models.Score, song: models.Song, instrument: models.Ins
         instrument_name=instrument.instrument_name,
         instrument_tuning=instrument.instrument_tuning,
     )
+
+
+def _user_allowed_instrument_ids(db: Session, user_id: int) -> list[int]:
+    allowed_instrument_ids = (
+        db.query(models.GroupInstrumentMembership.instrument_id)
+        .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
+        .filter(models.UserGroupMembership.user_id == user_id)
+        .distinct()
+        .all()
+    )
+    return [instrument_id for (instrument_id,) in allowed_instrument_ids]
+
+
+def _user_accessible_song_ids(db: Session, user_id: int) -> set[int]:
+    allowed_instrument_ids = _user_allowed_instrument_ids(db, user_id)
+    if not allowed_instrument_ids:
+        return set()
+    rows = (
+        db.query(models.Score.song_id)
+        .filter(models.Score.instrument_id.in_(allowed_instrument_ids))
+        .distinct()
+        .all()
+    )
+    return {song_id for (song_id,) in rows}
 
 
 def _safe_filename_part(value: str) -> str:
@@ -114,11 +140,14 @@ def _canonicalize_match_token(token: str) -> str | None:
     aliases = {
         "picc": "piccoloflote",
         "piccolo": "piccoloflote",
+        "piccoloflute": "piccoloflote",
         "piccoloflote": "piccoloflote",
         "piccolofloete": "piccoloflote",
         "fl": "flote",
         "fla": "flote",
         "flauto": "flote",
+        "flute": "flote",
+        "flutes": "flote",
         "flote": "flote",
         "floete": "flote",
         "ob": "oboe",
@@ -127,26 +156,44 @@ def _canonicalize_match_token(token: str) -> str | None:
         "kla": "klarinette",
         "klar": "klarinette",
         "klarinette": "klarinette",
+        "clarinet": "klarinette",
+        "clarinets": "klarinette",
         "cl": "klarinette",
         "clar": "klarinette",
         "bkl": "bassklarinette",
         "bassklar": "bassklarinette",
+        "bassclarinet": "bassklarinette",
         "bassklarinette": "bassklarinette",
+        "bassoon": "fagott",
+        "bassoons": "fagott",
+        "fagott": "fagott",
         "sax": "saxophon",
+        "saxophone": "saxophon",
+        "saxophones": "saxophon",
         "saxophon": "saxophon",
         "altsax": "altsaxophon",
+        "alto": "altsaxophon",
+        "altosax": "altsaxophon",
+        "altosaxophone": "altsaxophon",
         "alt": "altsaxophon",
         "altsaxophon": "altsaxophon",
         "tenorsax": "tenorsaxophon",
         "tenor": "tenorsaxophon",
+        "tenorsaxophone": "tenorsaxophon",
         "tenorsaxophon": "tenorsaxophon",
         "tp": "trompete",
         "trp": "trompete",
+        "trumpet": "trompete",
+        "trumpets": "trompete",
         "trompete": "trompete",
         "h": "horn",
         "horn": "horn",
+        "frenchhorn": "horn",
+        "frenchhorns": "horn",
         "pos": "posaune",
         "posaune": "posaune",
+        "trombone": "posaune",
+        "trombones": "posaune",
         "euph": "euphonium",
         "euphonium": "euphonium",
         "tuba": "tuba",
@@ -158,13 +205,18 @@ def _canonicalize_match_token(token: str) -> str | None:
         "schlagzeug": "schlagzeug",
         "vl": "violine",
         "vln": "violine",
+        "violin": "violine",
+        "violins": "violine",
         "violine": "violine",
         "vla": "bratsche",
+        "viola": "bratsche",
         "bratsche": "bratsche",
         "vc": "violoncello",
         "cello": "violoncello",
+        "cellos": "violoncello",
         "violoncello": "violoncello",
         "kb": "kontrabass",
+        "doublebass": "kontrabass",
         "kontrabass": "kontrabass",
     }
     if normalized in aliases:
@@ -415,12 +467,326 @@ def _preview_chapters_from_pdf(reader: PdfReader, db: Session, song_name: str | 
     return chapters
 
 
+def _clean_extracted_metadata_value(value: str | None, max_length: int) -> str | None:
+    if not value:
+        return None
+    cleaned = re.sub(r"\s+", " ", value).strip(" -:\t")
+    if not cleaned:
+        return None
+    return cleaned[:max_length]
+
+
+def _normalize_ocr_line(line: str) -> str:
+    cleaned = re.sub(r"\s+", " ", line).strip()
+    if not cleaned:
+        return ""
+
+    replacements = {
+        "ﬁ": "fi",
+        "ﬂ": "fl",
+        "–": "-",
+        "—": "-",
+        "…": "...",
+        "•": " ",
+        "|": " ",
+        "_": " ",
+    }
+    for source, target in replacements.items():
+        cleaned = cleaned.replace(source, target)
+
+    cleaned = re.sub(r"(?<![A-Za-z0-9])[#*+=]+", " ", cleaned)
+    cleaned = re.sub(r"(?<!\w)/(?!\w)", " ", cleaned)
+    cleaned = re.sub(r"[\[\]{}()<>]+", " ", cleaned)
+    cleaned = re.sub(r"[\\/]{2,}", " ", cleaned)
+    cleaned = re.sub(r"(?<=\w)[\-–—]{2,}(?=\w)", " ", cleaned)
+    cleaned = re.sub(r"[\u200B-\u200D\uFEFF]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" :;,-")
+    return cleaned
+
+
+def _score_title_candidate(line: str) -> tuple[int, int, int]:
+    cleaned = _clean_extracted_metadata_value(line, 512)
+    if not cleaned:
+        return (0, 0, -999)
+    cleaned = _normalize_ocr_line(cleaned)
+    if not cleaned:
+        return (0, 0, -999)
+
+    lower = cleaned.lower()
+    if lower.startswith("page "):
+        return (0, 0, -999)
+    if len(cleaned) < 3 or len(cleaned) > 120:
+        return (0, 0, -999)
+    if re.fullmatch(r"[0-9\s./:-]+", cleaned):
+        return (0, 0, -999)
+    if re.fullmatch(r"[\W_]+", cleaned):
+        return (0, 0, -999)
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        return (0, 0, -999)
+    if re.search(r"[|@#%*<>]+", cleaned):
+        return (0, 0, -999)
+    if re.search(r"(?:[\W_]{2,})", cleaned):
+        return (0, 0, -999)
+
+    words = cleaned.split()
+    word_count = len(words)
+    if word_count == 0:
+        return (0, 0, -999)
+    if word_count == 1 and len(cleaned) <= 3:
+        return (0, 0, -999)
+
+    title_case_words = sum(1 for word in words if word[:1].isupper() or word.isupper())
+    uppercase_ratio = title_case_words / word_count
+    score = 0
+    if word_count >= 2:
+        score += 10
+    if len(cleaned) >= 12:
+        score += 5
+    if uppercase_ratio >= 0.4 or any(part.isupper() for part in words):
+        score += 6
+    if any(token in lower for token in ("arrangement", "composer", "title", "titel", "musik", "stimme", "instrument", "page")):
+        return (0, 0, -999)
+    if any(ch.isdigit() for ch in cleaned):
+        score -= 3
+    if re.search(r"[\W_]{2,}", cleaned):
+        score -= 5
+    return (score, word_count, len(cleaned))
+
+
+def _ocr_pdf_first_pages(pdf_path: str | Path | None, page_limit: int = 2) -> str:
+    if not pdf_path:
+        return ""
+    pdf_path = Path(pdf_path)
+    if not pdf_path.exists():
+        return ""
+
+    if not shutil.which("pdftoppm") or not shutil.which("tesseract"):
+        return ""
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="stage-pdf-ocr-") as tmpdir:
+            tmp_dir = Path(tmpdir)
+            render = subprocess.run(
+                [
+                    "pdftoppm",
+                    "-png",
+                    "-r",
+                    "300",
+                    "-f",
+                    "1",
+                    "-l",
+                    str(page_limit),
+                    str(pdf_path),
+                    str(tmp_dir / "page"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if render.returncode != 0:
+                return ""
+
+            image_paths = sorted(tmp_dir.glob("page-*.png"))
+            if not image_paths:
+                return ""
+
+            ocr_pages: list[str] = []
+            for image_path in image_paths:
+                result = subprocess.run(
+                    ["tesseract", str(image_path), "stdout", "--psm", "6"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if result.stdout:
+                    ocr_pages.append(result.stdout)
+            return "\n".join(ocr_pages)
+    except Exception:
+        return ""
+
+
+def _collect_candidate_lines_from_reader(reader: PdfReader, source_file: str | Path | None = None, page_limit: int = 2) -> list[str]:
+    candidate_lines: list[str] = []
+    seen: set[str] = set()
+    page_text_chunks: list[str] = []
+
+    for page in reader.pages[:page_limit]:
+        try:
+            text = page.extract_text() or ""
+        except Exception:
+            text = ""
+        if text:
+            page_text_chunks.append(text)
+
+    full_text = "\n".join(page_text_chunks)
+    if not full_text.strip() and source_file is not None:
+        full_text = _ocr_pdf_first_pages(source_file, page_limit=page_limit)
+
+    for line in full_text.splitlines():
+        cleaned_line = _normalize_ocr_line(line)
+        if not cleaned_line:
+            continue
+        if cleaned_line.lower().startswith("page "):
+            continue
+        if cleaned_line in seen:
+            continue
+        seen.add(cleaned_line)
+        candidate_lines.append(cleaned_line)
+    return candidate_lines
+
+
+def _extract_song_metadata_from_pdf(
+    reader: PdfReader,
+    source_filename: str | None = None,
+    source_file: str | Path | None = None,
+) -> dict[str, str | None]:
+    composer: str | None = None
+    arrangement: str | None = None
+    title: str | None = None
+
+    candidate_lines = _collect_candidate_lines_from_reader(reader, source_file=source_file, page_limit=2)
+    top_lines = candidate_lines[:40]
+    fallback_lines = candidate_lines
+
+    composer_patterns = [
+        r"(?i)(?:^|\s)(?:komponist|composer|music by|musik)\s*[:\-]\s*(.+)$",
+        r"(?i)(?:^|\s)(?:von|by)\s+(.+)$",
+    ]
+    arrangement_patterns = [
+        r"(?i)(?:^|\s)(?:arrangement|arrangeur|arrangeuer|arr\.?|arr\s*)\s*[:\-]?\s*(.+)$",
+        r"(?i)(?:^|\s)(?:arrangement|arrangeur|arrangeuer)\s+(.+)$",
+    ]
+
+    for lines in (top_lines, fallback_lines):
+        for line in lines:
+            if composer is None:
+                for pattern in composer_patterns:
+                    match = re.search(pattern, line)
+                    if match:
+                        composer = _clean_extracted_metadata_value(match.group(1), 1024)
+                        break
+            if arrangement is None:
+                for pattern in arrangement_patterns:
+                    match = re.search(pattern, line)
+                    if match:
+                        arrangement = _clean_extracted_metadata_value(match.group(1), 1024)
+                        break
+            if composer is not None and arrangement is not None:
+                break
+        if composer is not None and arrangement is not None:
+            break
+
+    title_candidates: list[tuple[tuple[int, int, int], str]] = []
+    for lines in (top_lines, fallback_lines):
+        for line in lines:
+            lowered = line.lower()
+            if any(keyword in lowered for keyword in ("komponist", "composer", "arrangement", "arrangeur", "arrangeuer", "arr.", "title", "titel", "music by", "musik", "page ", "partitur", "stimme", "instrument", "voice")):
+                continue
+            score = _score_title_candidate(line)
+            if score[0] <= 0:
+                continue
+            if lines is top_lines:
+                score = (score[0] + 8, score[1], score[2])
+            title_candidates.append((score, line))
+
+    if title_candidates:
+        title = max(title_candidates, key=lambda item: item[0])[1]
+        title = _clean_extracted_metadata_value(title, 512)
+
+    if title is None:
+        metadata = getattr(reader, "metadata", None)
+        if metadata:
+            title = _clean_extracted_metadata_value(getattr(metadata, "title", None), 512)
+            if composer is None:
+                composer = _clean_extracted_metadata_value(getattr(metadata, "author", None), 1024)
+
+    if title is None and source_filename:
+        stem = Path(source_filename).stem
+        title = _clean_extracted_metadata_value(re.sub(r"[_\-]+", " ", stem), 512)
+
+    return {
+        "name": title,
+        "composer": composer,
+        "arrangement": arrangement,
+    }
+
+
 def _load_preview_metadata(upload_token: str) -> dict[str, Any]:
     metadata_path = _preview_metadata_path(upload_token)
     if not metadata_path.exists():
         raise HTTPException(status_code=404, detail="Upload session not found")
     with metadata_path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+def _validate_chapter_mappings(
+    chapters: list[dict[str, Any]], mappings: list[schemas.ScoreUploadMappingIn]
+) -> dict[int, schemas.ScoreUploadMappingIn]:
+    if not mappings:
+        raise HTTPException(status_code=400, detail="At least one chapter mapping is required")
+
+    mappings_by_index: dict[int, schemas.ScoreUploadMappingIn] = {}
+    for mapping in mappings:
+        if mapping.chapter_index in mappings_by_index:
+            raise HTTPException(status_code=400, detail=f"Duplicate mapping for chapter {mapping.chapter_index}")
+        mappings_by_index[mapping.chapter_index] = mapping
+
+    missing_mappings = [str(index) for index in range(len(chapters)) if index not in mappings_by_index]
+    if missing_mappings:
+        raise HTTPException(status_code=400, detail=f"Missing mappings for chapter(s): {', '.join(missing_mappings)}")
+
+    selected_mapping_count = sum(1 for mapping in mappings if mapping.include)
+    if selected_mapping_count <= 0:
+        raise HTTPException(status_code=400, detail="Please select at least one chapter to import")
+
+    return mappings_by_index
+
+
+def _create_scores_from_chapters(
+    *,
+    song: models.Song,
+    source_file: Path,
+    chapters: list[dict[str, Any]],
+    mappings_by_index: dict[int, schemas.ScoreUploadMappingIn],
+    notes: str | None,
+    db: Session,
+) -> list[tuple[models.Score, models.Instrument]]:
+    reader = PdfReader(str(source_file))
+    created_scores: list[tuple[models.Score, models.Instrument]] = []
+    for chapter_index, chapter in enumerate(chapters):
+        mapping = mappings_by_index.get(chapter_index)
+        if not mapping:
+            raise HTTPException(status_code=400, detail=f"Missing mapping for chapter {chapter_index}")
+        if not mapping.include:
+            continue
+        start_page = int(chapter.get("start_page", -1))
+        end_page = int(chapter.get("end_page", -1))
+        chapter_title = str(chapter.get("chapter_title", "")).strip() or f"Kapitel {chapter_index + 1}"
+        if start_page < 0 or end_page <= start_page or end_page > len(reader.pages):
+            raise HTTPException(status_code=400, detail=f"Invalid page range for chapter '{chapter_title}'")
+
+        instrument = _resolve_chapter_instrument(mapping, chapter_title, db)
+
+        writer = PdfWriter()
+        for page_no in range(start_page, end_page):
+            writer.add_page(reader.pages[page_no])
+        storage_path = _next_score_storage_relative_path(song, instrument, db)
+        part_path = _absolute_score_storage_path(storage_path)
+        part_path.parent.mkdir(parents=True, exist_ok=True)
+        with part_path.open("wb") as output_file:
+            writer.write(output_file)
+
+        score = models.Score(
+            song_id=song.id,
+            instrument_id=instrument.id,
+            storage_path=storage_path,
+            file_hash=_hash_file(part_path),
+            notes=notes,
+        )
+        db.add(score)
+        db.flush()
+        created_scores.append((score, instrument))
+    return created_scores
 
 
 def _resolve_chapter_instrument(
@@ -854,9 +1220,10 @@ def activate_user(user_id: int, db: Session = Depends(auth.get_db)):
 
 
 @router.get("/instruments", response_model=list[schemas.InstrumentOut])
-def list_instruments(request: Request, db: Session = Depends(auth.get_db)):
+def list_instruments(request: Request, view: str | None = None, db: Session = Depends(auth.get_db)):
     user = auth.get_current_user(request, db)
-    if auth.is_admin(user.get("user_group")) or auth.is_editor_or_admin(user.get("user_group")):
+    mode = (view or "").lower()
+    if auth.is_admin(user.get("user_group")) or (mode == "editor" and auth.is_editor_or_admin(user.get("user_group"))):
         return db.query(models.Instrument).order_by(models.Instrument.id.asc()).all()
 
     user_id = user.get("user_id")
@@ -864,14 +1231,10 @@ def list_instruments(request: Request, db: Session = Depends(auth.get_db)):
         return []
 
     allowed_instrument_ids = (
-        select(models.UserInstrument.instrument_id)
-        .filter(models.UserInstrument.user_id == user_id)
-        .union(
-            select(models.GroupInstrumentMembership.instrument_id)
-            .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
-            .filter(models.UserGroupMembership.user_id == user_id)
-            .distinct()
-        )
+        select(models.GroupInstrumentMembership.instrument_id)
+        .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
+        .filter(models.UserGroupMembership.user_id == user_id)
+        .distinct()
     )
     return (
         db.query(models.Instrument)
@@ -1083,8 +1446,27 @@ def delete_collection(collection_id: int, db: Session = Depends(auth.get_db)):
 
 
 @router.get("/songs", response_model=list[schemas.SongOut])
-def list_songs(db: Session = Depends(auth.get_db)):
-    return db.query(models.Song).options(selectinload(models.Song.collections)).order_by(models.Song.name.asc()).all()
+def list_songs(request: Request, view: str | None = None, db: Session = Depends(auth.get_db)):
+    user = auth.get_current_user(request, db)
+    mode = (view or "").lower()
+    if auth.is_admin(user.get("user_group")) or (mode == "editor" and auth.is_editor_or_admin(user.get("user_group"))):
+        return db.query(models.Song).options(selectinload(models.Song.collections)).order_by(models.Song.name.asc()).all()
+
+    user_id = user.get("user_id")
+    if user_id is None:
+        return []
+
+    accessible_song_ids = _user_accessible_song_ids(db, user_id)
+    if not accessible_song_ids:
+        return []
+
+    return (
+        db.query(models.Song)
+        .options(selectinload(models.Song.collections))
+        .filter(models.Song.id.in_(sorted(accessible_song_ids)))
+        .order_by(models.Song.name.asc())
+        .all()
+    )
 
 
 @router.post("/songs", response_model=schemas.SongOut)
@@ -1201,9 +1583,10 @@ def rescrape_storage(db: Session = Depends(auth.get_db)):
 
 
 @router.get("/scores", response_model=list[schemas.ScoreOut])
-def list_scores(request: Request, song_id: int | None = None, db: Session = Depends(auth.get_db)):
+def list_scores(request: Request, song_id: int | None = None, view: str | None = None, db: Session = Depends(auth.get_db)):
     user = auth.get_current_user(request, db)
-    if auth.is_admin(user.get("user_group")) or auth.is_editor_or_admin(user.get("user_group")):
+    mode = (view or "").lower()
+    if auth.is_admin(user.get("user_group")) or (mode == "editor" and auth.is_editor_or_admin(user.get("user_group"))):
         query = (
             db.query(models.Score, models.Song, models.Instrument)
             .join(models.Song, models.Song.id == models.Score.song_id)
@@ -1213,16 +1596,9 @@ def list_scores(request: Request, song_id: int | None = None, db: Session = Depe
         user_id = user.get("user_id")
         if user_id is None:
             return []
-        allowed_instrument_ids = (
-            select(models.UserInstrument.instrument_id)
-            .filter(models.UserInstrument.user_id == user_id)
-            .union(
-                select(models.GroupInstrumentMembership.instrument_id)
-                .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
-                .filter(models.UserGroupMembership.user_id == user_id)
-                .distinct()
-            )
-        )
+        allowed_instrument_ids = _user_allowed_instrument_ids(db, user_id)
+        if not allowed_instrument_ids:
+            return []
         query = (
             db.query(models.Score, models.Song, models.Instrument)
             .join(models.Song, models.Song.id == models.Score.song_id)
@@ -1319,13 +1695,75 @@ def upload_score_pdf_preview(
     )
 
 
+@router.post("/songs/upload/preview", response_model=schemas.SongUploadPreviewOut)
+def upload_new_song_pdf_preview(
+    file: UploadFile = File(...),
+    db: Session = Depends(auth.get_db),
+):
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Missing file name")
+    if Path(file.filename).suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    file.file.seek(0)
+    signature = file.file.read(5)
+    file.file.seek(0)
+    if signature != b"%PDF-":
+        raise HTTPException(status_code=400, detail="Only valid PDF files are allowed")
+
+    upload_token = secrets.token_urlsafe(24)
+    source_file = _preview_pdf_path(upload_token)
+    metadata_path = _preview_metadata_path(upload_token)
+    with source_file.open("wb") as output_file:
+        shutil.copyfileobj(file.file, output_file)
+
+    reader = PdfReader(str(source_file))
+    page_count = len(reader.pages)
+    if page_count <= 0:
+        if source_file.exists():
+            source_file.unlink()
+        raise HTTPException(status_code=400, detail="PDF has no pages")
+
+    song_metadata = _extract_song_metadata_from_pdf(reader, file.filename, source_file=source_file)
+    chapters = _preview_chapters_from_pdf(reader, db, song_name=song_metadata.get("name"))
+    metadata = {
+        "upload_token": upload_token,
+        "source_filename": file.filename,
+        "page_count": page_count,
+        "chapters": chapters,
+        "song_metadata": song_metadata,
+    }
+    with metadata_path.open("w", encoding="utf-8") as handle:
+        json.dump(metadata, handle, ensure_ascii=False)
+
+    return schemas.SongUploadPreviewOut(
+        upload_token=upload_token,
+        source_filename=file.filename,
+        page_count=page_count,
+        suggested_song_name=song_metadata.get("name"),
+        suggested_composer=song_metadata.get("composer"),
+        suggested_arrangement=song_metadata.get("arrangement"),
+        chapters=[
+            schemas.ScoreUploadChapterOut(
+                chapter_index=index,
+                chapter_title=chapter.get("original_chapter_title") or chapter.get("chapter_title") or f"Kapitel {index + 1}",
+                original_chapter_title=chapter.get("original_chapter_title") or chapter.get("chapter_title") or f"Kapitel {index + 1}",
+                start_page=chapter["start_page"],
+                end_page=chapter["end_page"],
+                suggested_instrument_id=chapter.get("suggested_instrument_id"),
+                suggested_instrument_name=chapter.get("suggested_instrument_name"),
+                suggested_instrument_tuning=chapter.get("suggested_instrument_tuning"),
+            )
+            for index, chapter in enumerate(chapters)
+        ],
+    )
+
+
 @router.post("/scores/upload/commit", response_model=list[schemas.ScoreOut])
 def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Session = Depends(auth.get_db)):
     song = db.query(models.Song).filter(models.Song.id == payload.song_id).first()
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
-    if not payload.mappings:
-        raise HTTPException(status_code=400, detail="At least one chapter mapping is required")
 
     source_file = _preview_pdf_path(payload.upload_token)
     if not source_file.exists():
@@ -1336,54 +1774,15 @@ def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Sessi
     if not isinstance(chapters, list) or not chapters:
         raise HTTPException(status_code=400, detail="Upload session has no chapter data")
 
-    mappings_by_index: dict[int, schemas.ScoreUploadMappingIn] = {}
-    for mapping in payload.mappings:
-        if mapping.chapter_index in mappings_by_index:
-            raise HTTPException(status_code=400, detail=f"Duplicate mapping for chapter {mapping.chapter_index}")
-        mappings_by_index[mapping.chapter_index] = mapping
-
-    missing_mappings = [str(index) for index in range(len(chapters)) if index not in mappings_by_index]
-    if missing_mappings:
-        raise HTTPException(status_code=400, detail=f"Missing mappings for chapter(s): {', '.join(missing_mappings)}")
-    selected_mapping_count = sum(1 for mapping in payload.mappings if mapping.include)
-    if selected_mapping_count <= 0:
-        raise HTTPException(status_code=400, detail="Please select at least one chapter to import")
-
-    reader = PdfReader(str(source_file))
-    created_scores: list[tuple[models.Score, models.Instrument]] = []
-    for chapter_index, chapter in enumerate(chapters):
-        mapping = mappings_by_index.get(chapter_index)
-        if not mapping:
-            raise HTTPException(status_code=400, detail=f"Missing mapping for chapter {chapter_index}")
-        if not mapping.include:
-            continue
-        start_page = int(chapter.get("start_page", -1))
-        end_page = int(chapter.get("end_page", -1))
-        chapter_title = str(chapter.get("chapter_title", "")).strip() or f"Kapitel {chapter_index + 1}"
-        if start_page < 0 or end_page <= start_page or end_page > len(reader.pages):
-            raise HTTPException(status_code=400, detail=f"Invalid page range for chapter '{chapter_title}'")
-
-        instrument = _resolve_chapter_instrument(mapping, chapter_title, db)
-
-        writer = PdfWriter()
-        for page_no in range(start_page, end_page):
-            writer.add_page(reader.pages[page_no])
-        storage_path = _next_score_storage_relative_path(song, instrument, db)
-        part_path = _absolute_score_storage_path(storage_path)
-        part_path.parent.mkdir(parents=True, exist_ok=True)
-        with part_path.open("wb") as output_file:
-            writer.write(output_file)
-
-        score = models.Score(
-            song_id=payload.song_id,
-            instrument_id=instrument.id,
-            storage_path=storage_path,
-            file_hash=_hash_file(part_path),
-            notes=payload.notes,
-        )
-        db.add(score)
-        db.flush()
-        created_scores.append((score, instrument))
+    mappings_by_index = _validate_chapter_mappings(chapters, payload.mappings)
+    created_scores = _create_scores_from_chapters(
+        song=song,
+        source_file=source_file,
+        chapters=chapters,
+        mappings_by_index=mappings_by_index,
+        notes=payload.notes,
+        db=db,
+    )
 
     db.commit()
     if source_file.exists():
@@ -1397,6 +1796,57 @@ def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Sessi
         db.refresh(score)
         result.append(_score_to_out(score, song, instrument))
     return result
+
+
+@router.post("/songs/upload/commit", response_model=schemas.SongUploadCommitOut)
+def upload_new_song_pdf_commit(payload: schemas.SongUploadCommitRequest, db: Session = Depends(auth.get_db)):
+    source_file = _preview_pdf_path(payload.upload_token)
+    if not source_file.exists():
+        raise HTTPException(status_code=404, detail="Upload file not found")
+
+    metadata = _load_preview_metadata(payload.upload_token)
+    chapters = metadata.get("chapters", [])
+    if not isinstance(chapters, list) or not chapters:
+        raise HTTPException(status_code=400, detail="Upload session has no chapter data")
+
+    mappings_by_index = _validate_chapter_mappings(chapters, payload.mappings)
+
+    song_name = payload.name.strip()
+    if not song_name:
+        raise HTTPException(status_code=400, detail="Song name must not be empty")
+
+    song = models.Song(
+        name=song_name,
+        tune=payload.tune.strip() if payload.tune and payload.tune.strip() else None,
+        composer=payload.composer.strip() if payload.composer and payload.composer.strip() else None,
+        arrangement=payload.arrangement.strip() if payload.arrangement and payload.arrangement.strip() else None,
+        notes=None,
+    )
+    db.add(song)
+    db.flush()
+    created_scores = _create_scores_from_chapters(
+        song=song,
+        source_file=source_file,
+        chapters=chapters,
+        mappings_by_index=mappings_by_index,
+        notes=payload.score_notes.strip() if payload.score_notes and payload.score_notes.strip() else None,
+        db=db,
+    )
+
+    db.commit()
+    db.refresh(song)
+    if source_file.exists():
+        source_file.unlink()
+    metadata_path = _preview_metadata_path(payload.upload_token)
+    if metadata_path.exists():
+        metadata_path.unlink()
+
+    result_scores: list[schemas.ScoreOut] = []
+    for score, instrument in created_scores:
+        db.refresh(score)
+        result_scores.append(_score_to_out(score, song, instrument))
+
+    return schemas.SongUploadCommitOut(song=song, scores=result_scores)
 
 
 @router.post("/scores/upload", response_model=list[schemas.ScoreOut])

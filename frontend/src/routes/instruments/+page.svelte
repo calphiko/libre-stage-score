@@ -2,6 +2,7 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { createInstrument, deleteInstrument, getInstruments, getUser, updateInstrument } from "$lib/api.js";
+  import { showToast } from "$lib/toasts.js";
 
   let me = null;
   let error = "";
@@ -11,6 +12,16 @@
   let editingInstrumentId = null;
   let showInstrumentModal = false;
   let instrumentForm = { instrument_name: "", instrument_tuning: "", notes: "" };
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
+
+  $: if (ok) {
+    showToast(ok, "ok");
+    ok = "";
+  }
 
   function canManageInstruments() {
     return me?.user_group === "admin" || me?.user_group === "editor";
@@ -31,7 +42,7 @@
         goto("/songs");
         return;
       }
-      instruments = await getInstruments();
+      instruments = await getInstruments("editor");
       selectedInstrumentIds = selectedInstrumentIds.filter((instrumentId) =>
         instruments.some((instrument) => Number(instrument.id) === Number(instrumentId))
       );
@@ -151,13 +162,6 @@
 
   onMount(loadAll);
 </script>
-
-{#if error}
-  <p class="error">{error}</p>
-{/if}
-{#if ok}
-  <p class="ok">{ok}</p>
-{/if}
 
 {#if me && canManageInstruments()}
   <section class="card">

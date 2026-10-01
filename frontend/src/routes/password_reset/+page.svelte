@@ -1,6 +1,7 @@
 <script>
   import { page } from "$app/stores";
   import { verifyPwResetToken, resetPassword } from "$lib/api.js";
+  import { showToast } from "$lib/toasts.js";
   import { onMount } from "svelte";
 
   let token = "";
@@ -9,6 +10,16 @@
   let error = "";
   let ok = "";
   let tokenValid = false;
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
+
+  $: if (ok) {
+    showToast(ok, "ok");
+    ok = "";
+  }
 
   onMount(async () => {
     token = $page.url.searchParams.get("token") ?? "";
@@ -41,12 +52,6 @@
 
 <section class="card">
   <h1>Passwort zurücksetzen</h1>
-  {#if error}
-    <p class="error">{error}</p>
-  {/if}
-  {#if ok}
-    <p class="ok">{ok}</p>
-  {/if}
 
   {#if tokenValid}
     <p>Benutzer: <strong>{userName}</strong></p>
@@ -57,4 +62,3 @@
     </form>
   {/if}
 </section>
-

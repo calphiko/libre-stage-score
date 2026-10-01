@@ -2,11 +2,17 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { getUser, login } from "$lib/api.js";
+  import { showToast } from "$lib/toasts.js";
 
   let username = "";
   let password = "";
   let error = "";
   let loading = false;
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
 
   onMount(async () => {
     try {
@@ -43,8 +49,4 @@
     </p>
     <button type="submit" disabled={loading}>{loading ? "..." : "Einloggen"}</button>
   </form>
-  {#if error}
-    <p class="error">{error}</p>
-  {/if}
 </section>
-

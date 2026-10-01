@@ -2,10 +2,8 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import {
-    createCollection,
     deleteScore,
     createSong,
-    deleteCollection,
     deleteSong,
     getCollections,
     getInstruments,
@@ -15,11 +13,15 @@
     getUser,
     previewScorePdfUpload,
     commitScorePdfUpload,
-    updateCollection,
     updateScore,
     updateSong,
     updateSongCollections,
   } from "$lib/api.js";
+  import DeleteIcon from "$lib/components/icons/DeleteIcon.svelte";
+  import EditIcon from "$lib/components/icons/EditIcon.svelte";
+  import OpenFileIcon from "$lib/components/icons/OpenFileIcon.svelte";
+  import SaveIcon from "$lib/components/icons/SaveIcon.svelte";
+  import { showToast } from "$lib/toasts.js";
 
   let me = null;
   let error = "";
@@ -27,6 +29,9 @@
   let songs = [];
   let collections = [];
   let instruments = [];
+  const EDITOR_MODE_STORAGE_KEY = "editor-mode-view";
+
+  let editorViewMode = false;
   let songFilter = "";
   let activeSong = null;
   let activeSongScores = [];
@@ -45,10 +50,19 @@
   let uploadPreview = null;
   let chapterMappings = [];
   let isDragActive = false;
-  let collectionForm = { name: "", notes: "" };
   let songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
   let editingSongId = null;
   let songFormMode = "create";
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
+
+  $: if (ok) {
+    showToast(ok, "ok");
+    ok = "";
+  }
 
   function resetSongForm() {
     songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
@@ -65,16 +79,44 @@
     return items.map((collection) => ({ ...collection, notes: collection.notes ?? "" }));
   }
 
+  function effectiveSongView() {
+    if (me?.user_group === "admin") return "editor";
+    if (me?.user_group === "editor") return editorViewMode ? "editor" : "user";
+    return "user";
+  }
+
+  function syncEditorModeState() {
+    if (typeof window === "undefined") return;
+    const storedValue = window.localStorage.getItem(EDITOR_MODE_STORAGE_KEY);
+    if (me?.user_group === "admin") {
+      editorViewMode = true;
+      return;
+    }
+    if (me?.user_group === "editor") {
+      editorViewMode = storedValue === "true";
+    }
+  }
+
+  function persistEditorModeState(nextValue) {
+    if (typeof window === "undefined") return;
+    const active = Boolean(nextValue);
+    window.localStorage.setItem(EDITOR_MODE_STORAGE_KEY, String(active));
+  }
+
   async function loadAll() {
     error = "";
     ok = "";
     try {
       me = await getUser();
+      syncEditorModeState();
+
+      const view = effectiveSongView();
       const [loadedSongs, loadedInstruments, loadedCollections] = await Promise.all([
-        getSongs(),
-        getInstruments(),
+        getSongs(view),
+        getInstruments(view),
         getCollections(),
       ]);
+
       songs = loadedSongs;
       instruments = loadedInstruments;
       collections = normalizeCollections(loadedCollections);
@@ -113,6 +155,10 @@
     return me?.user_group === "admin" || me?.user_group === "editor";
   }
 
+  function canToggleEditorMode() {
+    return me?.user_group === "editor";
+  }
+
   async function openScoresModal(song) {
     error = "";
     ok = "";
@@ -120,7 +166,7 @@
       activeSong = song;
       modalTab = "scores";
       selectedSongCollectionIds = (song.collections ?? []).map((collection) => collection.id);
-      const scores = await getScores(song.id);
+      const scores = await getScores(song.id, effectiveSongView());
       const allowedInstrumentIds = new Set(instruments.map((instrument) => Number(instrument.id)));
       activeSongScores = scores.filter(
         (score) => allowedInstrumentIds.has(Number(score.instrument_id)) && isPdfStoragePath(score.storage_path)
@@ -172,7 +218,7 @@
 
   async function refreshActiveSongScores() {
     if (!activeSong) return;
-    const scores = await getScores(activeSong.id);
+    const scores = await getScores(activeSong.id, effectiveSongView());
     const allowedInstrumentIds = new Set(instruments.map((instrument) => Number(instrument.id)));
     activeSongScores = scores.filter(
       (score) => allowedInstrumentIds.has(Number(score.instrument_id)) && isPdfStoragePath(score.storage_path)
@@ -242,7 +288,8 @@
   }
 
   async function refreshSongsAndCollections() {
-    const [loadedSongs, loadedCollections] = await Promise.all([getSongs(), getCollections()]);
+    const view = effectiveSongView();
+    const [loadedSongs, loadedCollections] = await Promise.all([getSongs(view), getCollections()]);
     songs = loadedSongs;
     collections = normalizeCollections(loadedCollections);
     if (activeSong) {
@@ -368,7 +415,7 @@
       uploadStep = "select";
       uploadPreview = null;
       chapterMappings = [];
-      instruments = await getInstruments();
+      instruments = await getInstruments(effectiveSongView());
       modalTab = "scores";
       await refreshActiveSongScores();
       await refreshSongsAndCollections();
@@ -386,56 +433,6 @@
     try {
       await updateSongCollections(activeSong.id, selectedSongCollectionIds);
       ok = "Sammlungen gespeichert.";
-      await refreshSongsAndCollections();
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
-  async function createNewCollection() {
-    error = "";
-    ok = "";
-    if (!collectionForm.name.trim()) {
-      error = "Bitte einen Sammlungsnamen eingeben.";
-      return;
-    }
-    try {
-      const created = await createCollection({
-        name: collectionForm.name.trim(),
-        notes: collectionForm.notes.trim() || null,
-      });
-      collectionForm = { name: "", notes: "" };
-      await refreshSongsAndCollections();
-      if (activeSong) {
-        selectedSongCollectionIds = [...selectedSongCollectionIds, created.id];
-      }
-      ok = "Sammlung angelegt.";
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
-  async function saveCollection(collection) {
-    error = "";
-    ok = "";
-    try {
-      await updateCollection(collection.id, {
-        name: collection.name,
-        notes: collection.notes || null,
-      });
-      ok = "Sammlung aktualisiert.";
-      await refreshSongsAndCollections();
-    } catch (err) {
-      error = err.message;
-    }
-  }
-
-  async function removeCollection(collection) {
-    error = "";
-    ok = "";
-    try {
-      await deleteCollection(collection.id);
-      ok = "Sammlung gelöscht.";
       await refreshSongsAndCollections();
     } catch (err) {
       error = err.message;
@@ -519,7 +516,16 @@
     }
   }
 
-  onMount(loadAll);
+  onMount(() => {
+    loadAll();
+    const onSongsChanged = () => {
+      loadAll();
+    };
+    window.addEventListener("songs:changed", onSongsChanged);
+    return () => {
+      window.removeEventListener("songs:changed", onSongsChanged);
+    };
+  });
   function selectUploadFile(file) {
     if (!file) return;
     if (!isPdfStoragePath(file.name)) {
@@ -628,19 +634,48 @@
     color: var(--color-error-700);
     border-color: var(--color-error-300);
   }
-</style>
 
-{#if error}
-  <p class="error">{error}</p>
-{/if}
-{#if ok}
-  <p class="ok">{ok}</p>
-{/if}
+  .inline-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+  }
+
+  .inline-toggle--filter {
+    padding: 0.25rem 0.55rem;
+    border: 1px solid var(--color-border, rgba(15, 23, 42, 0.15));
+    border-radius: 999px;
+    background: var(--color-neutral-50, rgba(148, 163, 184, 0.08));
+    color: var(--color-text, inherit);
+  }
+
+  .inline-toggle--filter input {
+    accent-color: var(--color-primary-600, #2563eb);
+  }
+</style>
 
 {#if me}
   <section class="card">
     <div class="row" style="align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
-      <h2 style="margin: 0;">Stücke</h2>
+      <div class="row" style="align-items: center; gap: 0.75rem;">
+        <h2 style="margin: 0;">Stücke</h2>
+        {#if canToggleEditorMode()}
+          <label class="inline-toggle inline-toggle--filter" style="margin: 0;">
+            <input
+              type="checkbox"
+              checked={editorViewMode}
+              onchange={(event) => {
+                editorViewMode = event.currentTarget.checked;
+                persistEditorModeState(editorViewMode);
+                loadAll();
+              }}
+            />
+            <span>{editorViewMode ? "Alle Stücke" : "Nur meine Gruppe"}</span>
+          </label>
+        {/if}
+      </div>
       {#if canManageSongs()}
         <button
           aria-label="Neues Stück anlegen"
@@ -687,8 +722,8 @@
               {#if canManageSongs()}
                 <td>
                   <div class="row">
-                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }} aria-label="Stück bearbeiten" title="Stück bearbeiten">✎</button>
-                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }} aria-label="Stück löschen" title="Stück löschen">🗑</button>
+                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }} aria-label="Stück bearbeiten" title="Stück bearbeiten"><EditIcon /></button>
+                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }} aria-label="Stück löschen" title="Stück löschen"><DeleteIcon /></button>
                   </div>
                 </td>
               {/if}
@@ -702,7 +737,7 @@
   <dialog bind:this={scoresModal} class="app-dialog">
     <div class="row" style="justify-content: space-between; align-items: center;">
       <h3 style="margin: 0;">Stimmen für {activeSong?.name}</h3>
-      <button class="secondary" onclick={closeScoresModal}>Schließen</button>
+      <button type="button" class="secondary" onclick={closeScoresModal} aria-label="Schließen" title="Schließen">✕</button>
     </div>
     <div class="modal-tabs">
       <button class={modalTab === "scores" ? "tab-active" : "secondary"} onclick={() => switchModalTab("scores")}
@@ -747,7 +782,7 @@
                             </option>
                           {/each}
                         </select>
-                        <button class="secondary" onclick={() => saveScoreInstrumentAssignment(score)} aria-label="Zuweisung speichern" title="Zuweisung speichern">💾</button>
+                        <button class="secondary" onclick={() => saveScoreInstrumentAssignment(score)} aria-label="Zuweisung speichern" title="Zuweisung speichern"><SaveIcon /></button>
                         <button class="secondary" onclick={cancelScoreInstrumentEdit} aria-label="Bearbeiten abbrechen" title="Bearbeiten abbrechen">✕</button>
                       </div>
                     {:else}
@@ -761,7 +796,7 @@
                             title="Stimmenzuordnung bearbeiten"
                             style="padding: 0.15rem 0.4rem; min-width: 1.8rem; line-height: 1;"
                           >
-                            ✎
+                            <EditIcon />
                           </button>
                         {/if}
                       </div>
@@ -778,7 +813,7 @@
                         aria-label="PDF öffnen"
                         title="PDF öffnen"
                       >
-                        📄
+                        <OpenFileIcon />
                       </a>
                       {#if canEditScoreAssignments()}
                         <button
@@ -787,7 +822,7 @@
                           aria-label="PDF löschen"
                           title="PDF löschen"
                         >
-                          🗑
+                          <DeleteIcon />
                         </button>
                       {/if}
                     </div>
@@ -924,6 +959,10 @@
     {:else if modalTab === "collections" && canManageSongs()}
       <div class="card">
         <h4>Sammlungen für dieses Stück</h4>
+        <p>
+          Sammlungen anlegen, umbenennen und löschen erfolgt auf der Seite
+          <a href="/collections">Sammlungen</a>.
+        </p>
         {#if collections.length === 0}
           <p>Noch keine Sammlungen vorhanden.</p>
         {:else}
@@ -940,51 +979,13 @@
       </div>
     {/if}
   </dialog>
-
-  {#if canManageSongs()}
-    <section class="card">
-      <h2>Sammlungen verwalten</h2>
-      <div class="row">
-        <input placeholder="Neue Sammlung" bind:value={collectionForm.name} />
-        <input placeholder="Notizen" bind:value={collectionForm.notes} />
-        <button onclick={createNewCollection} aria-label="Sammlung anlegen" title="Sammlung anlegen">💾 Sammlung anlegen</button>
-      </div>
-      {#if collections.length > 0}
-        <div class="table-wrap" style="margin-top: 1rem;">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Notizen</th>
-                <th>Aktion</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each collections as collection}
-                <tr>
-                  <td><input bind:value={collection.name} /></td>
-                  <td><input bind:value={collection.notes} /></td>
-                  <td>
-                    <div class="row">
-                      <button onclick={() => saveCollection(collection)} aria-label="Sammlung speichern" title="Sammlung speichern">💾</button>
-                      <button class="warn" onclick={() => removeCollection(collection)} aria-label="Sammlung löschen" title="Sammlung löschen">🗑</button>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </section>
-  {/if}
 {/if}
 
 {#if canManageSongs() && showSongModal}
   <dialog open class="app-dialog">
     <div class="row" style="justify-content: space-between; align-items: center;">
       <h3 style="margin: 0;">{songFormMode === "edit" ? "Stück bearbeiten" : "Neues Stück anlegen"}</h3>
-      <button class="secondary" onclick={closeSongModal}>Schließen</button>
+      <button type="button" class="secondary" onclick={closeSongModal} aria-label="Schließen" title="Schließen">✕</button>
     </div>
     <div class="card" style="margin-top: 1rem;">
       <div class="row">
@@ -1016,7 +1017,7 @@
         </div>
       </div>
       <p style="margin-top: 1rem;">
-        <button onclick={saveSong} aria-label={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"} title={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}>💾 {songFormMode === "edit" ? "Speichern" : "Anlegen"}</button>
+        <button onclick={saveSong} aria-label={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"} title={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}><SaveIcon /> {songFormMode === "edit" ? "Speichern" : "Anlegen"}</button>
         <button class="secondary" onclick={resetSongForm} aria-label="Formular zurücksetzen" title="Formular zurücksetzen">↺ Zurücksetzen</button>
       </p>
     </div>

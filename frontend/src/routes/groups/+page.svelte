@@ -15,10 +15,23 @@
     updateGroupInstruments,
     updateUserGroups,
   } from "$lib/api.js";
+  import SaveIcon from "$lib/components/icons/SaveIcon.svelte";
+  import DeleteIcon from "$lib/components/icons/DeleteIcon.svelte";
+  import { showToast } from "$lib/toasts.js";
 
   let me = null;
   let error = "";
   let ok = "";
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
+
+  $: if (ok) {
+    showToast(ok, "ok");
+    ok = "";
+  }
 
   let groups = [];
   let instruments = [];
@@ -81,7 +94,7 @@
 
       const [loadedGroups, loadedInstruments, loadedUsers] = await Promise.all([
         getGroups(),
-        getInstruments(),
+        getInstruments("editor"),
         getAssignableUsers(),
       ]);
 
@@ -290,13 +303,6 @@
   }
 </style>
 
-{#if error}
-  <p class="error">{error}</p>
-{/if}
-{#if ok}
-  <p class="ok">{ok}</p>
-{/if}
-
 {#if me && canManageGroups()}
   {#if showCreateGroupModal}
     <div
@@ -369,14 +375,14 @@
                 <td><input bind:value={group.notes} /></td>
                 <td>
                   <div class="row">
-                    <button aria-label="Gruppe speichern" title="Speichern" onclick={() => saveGroup(group)}>💾</button>
+                    <button aria-label="Gruppe speichern" title="Speichern" onclick={() => saveGroup(group)}><SaveIcon /></button>
                     <button
                       class="warn"
                       aria-label="Gruppe löschen"
                       title="Löschen"
                       onclick={() => removeGroup(group)}
                     >
-                      🗑
+                      <DeleteIcon />
                     </button>
                   </div>
                 </td>

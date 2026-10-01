@@ -12,11 +12,22 @@
     updateUser,
     triggerSendPwResetToken,
   } from "$lib/api.js";
+  import { showToast } from "$lib/toasts.js";
 
   let me = null;
   let error = "";
   let ok = "";
   let allUsers = [];
+
+  $: if (error) {
+    showToast(error, "error");
+    error = "";
+  }
+
+  $: if (ok) {
+    showToast(ok, "ok");
+    ok = "";
+  }
 
   let selfForm = { clear_name: "", email: "", mm_username: "" };
   let passwordForm = { old_password: "", new_password: "" };
@@ -141,13 +152,6 @@
 
   onMount(loadAll);
 </script>
-
-{#if error}
-  <p class="error">{error}</p>
-{/if}
-{#if ok}
-  <p class="ok">{ok}</p>
-{/if}
 
 {#if me}
   <section class="card">

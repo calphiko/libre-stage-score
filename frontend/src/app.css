@@ -39,16 +39,21 @@ body {
   min-height: 100%;
 }
 
+html {
+  font-size: 14px;
+}
+
 body {
   margin: 0;
   background-color: var(--color-surface-100-900);
   color: var(--color-surface-950-50);
+  line-height: 1.35;
 }
 
 main {
   max-width: 980px;
   margin: 0 auto;
-  padding: 1rem;
+  padding: 0.65rem;
 }
 
 h1 {
@@ -111,6 +116,9 @@ textarea:focus-within {
 
 button {
   @apply btn preset-filled-primary-500;
+  font-size: var(--text-sm);
+  min-height: 2rem;
+  padding: 0.32rem 0.7rem;
 }
 
 button.secondary {
@@ -147,7 +155,7 @@ label:has(input[type="radio"]) {
   display: inline-flex;
   width: auto;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.35rem;
   font-size: var(--text-sm);
   line-height: var(--text-sm--line-height);
   font-weight: var(--font-weight-normal);
@@ -155,8 +163,8 @@ label:has(input[type="radio"]) {
 
 .card {
   @apply card preset-tonal-surface;
-  margin-bottom: 1rem;
-  padding: 1rem;
+  margin-bottom: 0.65rem;
+  padding: 0.7rem;
   box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
 }
 
@@ -170,7 +178,7 @@ label:has(input[type="radio"]) {
 
 .row {
   display: flex;
-  gap: 1rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
   align-items: flex-start;
 }
@@ -189,30 +197,30 @@ label:has(input[type="radio"]) {
 
 .app-header {
   @apply preset-filled-primary-500;
-  margin-bottom: 1rem;
+  margin-bottom: 0.65rem;
 }
 
 .app-header__inner {
   max-width: 980px;
   margin: 0 auto;
-  padding: 1rem;
+  padding: 0.6rem 0.65rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
+  gap: 0.6rem;
   flex-wrap: wrap;
 }
 
 .app-header__title {
-  font-size: var(--text-xl);
-  line-height: var(--text-xl--line-height);
+  font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
   font-weight: var(--font-weight-semibold);
 }
 
 .app-header__nav {
   display: flex;
   align-items: center;
-  gap: 0.75rem 1rem;
+  gap: 0.5rem 0.7rem;
   flex-wrap: wrap;
 }
 
@@ -225,11 +233,11 @@ label:has(input[type="radio"]) {
 }
 
 .theme-switch {
-  min-width: 11rem;
+  min-width: 9rem;
 }
 
 .theme-switch select {
-  min-width: 11rem;
+  min-width: 9rem;
 }
 
 .error {
@@ -238,4 +246,13 @@ label:has(input[type="radio"]) {
 
 .ok {
   color: var(--color-success-700);
+}
+
+p {
+  margin: 0.4rem 0;
+}
+
+table th,
+table td {
+  padding: 0.4rem 0.5rem;
 }

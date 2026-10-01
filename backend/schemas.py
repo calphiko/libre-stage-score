@@ -224,6 +224,12 @@ class ScoreUploadPreviewOut(BaseModel):
     chapters: list[ScoreUploadChapterOut] = Field(default_factory=list)
 
 
+class SongUploadPreviewOut(ScoreUploadPreviewOut):
+    suggested_song_name: str | None = None
+    suggested_composer: str | None = None
+    suggested_arrangement: str | None = None
+
+
 class ScoreUploadMappingIn(BaseModel):
     chapter_index: int
     include: bool = True
@@ -237,6 +243,21 @@ class ScoreUploadCommitRequest(BaseModel):
     upload_token: str = Field(..., min_length=8, max_length=255)
     notes: str | None = None
     mappings: list[ScoreUploadMappingIn] = Field(default_factory=list)
+
+
+class SongUploadCommitRequest(BaseModel):
+    upload_token: str = Field(..., min_length=8, max_length=255)
+    name: str = Field(..., min_length=1, max_length=512)
+    tune: str | None = Field(default=None, max_length=32)
+    composer: str | None = Field(default=None, max_length=1024)
+    arrangement: str | None = Field(default=None, max_length=1024)
+    score_notes: str | None = None
+    mappings: list[ScoreUploadMappingIn] = Field(default_factory=list)
+
+
+class SongUploadCommitOut(BaseModel):
+    song: SongOut
+    scores: list[ScoreOut] = Field(default_factory=list)
 
 
 class StorageStatusOut(BaseModel):
