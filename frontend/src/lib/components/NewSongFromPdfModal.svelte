@@ -1,6 +1,7 @@
 <script>
   import { goto } from "$app/navigation";
-  import { commitNewSongPdfUpload, getInstruments, previewNewSongPdfUpload } from "$lib/api.js";
+  import { tick } from "svelte";
+  import { commitNewSongPdfUpload, getInstruments, getSongMetadata, previewNewSongPdfUpload } from "$lib/api.js";
   import { showToast } from "$lib/toasts.js";
 
   export let canManage = false;
@@ -9,6 +10,7 @@
   let showModal = false;
   let isDragActive = false;
   let instruments = [];
+  let songMetadata = null;
   let isLoadingInstruments = false;
   let isAnalyzingPdf = false;
   let isSubmitting = false;
@@ -16,6 +18,8 @@
   let uploadPreview = null;
   let pdfPreviewUrl = "";
   let isPdfPreviewExpanded = false;
+  let chapterPreviewImage = null;
+  let chapterPreviewDialog;
   let chapterMappings = [];
   let form = {
     file: null,
@@ -25,6 +29,14 @@
     tune: "",
     composer: "",
     arrangement: "",
+    publisher: "",
+    physical_storage_id: "",
+    ensemble_id: "",
+    kind_of_song_id: "",
+    difficulty_level_id: "",
+    song_rythm_id: "",
+    score_completed: false,
+    song_with_solo: false,
   };
 
   function resetFlow() {
@@ -40,6 +52,7 @@
     uploadStep = "select";
     uploadPreview = null;
     isPdfPreviewExpanded = false;
+    chapterPreviewImage = null;
     chapterMappings = [];
     form = {
       file: null,
@@ -49,6 +62,14 @@
       tune: "",
       composer: "",
       arrangement: "",
+      publisher: "",
+      physical_storage_id: "",
+      ensemble_id: "",
+      kind_of_song_id: "",
+      difficulty_level_id: "",
+      song_rythm_id: "",
+      score_completed: false,
+      song_with_solo: false,
     };
   }
 
@@ -60,10 +81,15 @@
     if (!canManage) return;
     onOpen();
     showModal = true;
-    if (instruments.length > 0) return;
+    if (instruments.length > 0 && songMetadata) return;
     try {
       isLoadingInstruments = true;
-      instruments = await getInstruments("editor");
+      const [loadedInstruments, loadedSongMetadata] = await Promise.all([
+        getInstruments("editor"),
+        getSongMetadata(),
+      ]);
+      instruments = loadedInstruments;
+      songMetadata = loadedSongMetadata;
     } catch (err) {
       showToast(err.message, "error");
     } finally {
@@ -87,6 +113,22 @@
     }
     if (!pdfPreviewUrl || isAnalyzingPdf) return;
     isPdfPreviewExpanded = !isPdfPreviewExpanded;
+  }
+
+  async function openChapterPreview(event, image) {
+    event.stopPropagation();
+    chapterPreviewImage = image;
+    await tick();
+    if (chapterPreviewDialog && !chapterPreviewDialog.open) {
+      chapterPreviewDialog.showModal();
+    }
+  }
+
+  function closeChapterPreview(event = null) {
+    event?.stopPropagation();
+    if (chapterPreviewDialog?.open) {
+      chapterPreviewDialog.close();
+    }
   }
 
   function setAllChapterImportSelection(include) {
@@ -229,6 +271,14 @@
         tune: form.tune.trim() || null,
         composer: form.composer.trim() || null,
         arrangement: form.arrangement.trim() || null,
+        publisher: form.publisher.trim() || null,
+        physical_storage_id: form.physical_storage_id ? Number(form.physical_storage_id) : null,
+        ensemble_id: form.ensemble_id ? Number(form.ensemble_id) : null,
+        kind_of_song_id: form.kind_of_song_id ? Number(form.kind_of_song_id) : null,
+        difficulty_level_id: form.difficulty_level_id ? Number(form.difficulty_level_id) : null,
+        song_rythm_id: form.song_rythm_id ? Number(form.song_rythm_id) : null,
+        score_completed: Boolean(form.score_completed),
+        song_with_solo: Boolean(form.song_with_solo),
         score_notes: form.score_notes.trim() || null,
         mappings: chapterMappings.map((mapping) => ({
           chapter_index: mapping.chapter_index,
@@ -393,6 +443,23 @@
         </div>
       {/if}
 
+      <dialog
+        bind:this={chapterPreviewDialog}
+        class="chapter-preview-dialog"
+        aria-label="Vergrößerte Stimmvorschau"
+        onclick={(event) => {
+          if (event.target === event.currentTarget) closeChapterPreview(event);
+        }}
+        onclose={() => (chapterPreviewImage = null)}
+      >
+        <div class="chapter-preview-dialog__content">
+          <button type="button" class="secondary" onclick={closeChapterPreview} aria-label="Schließen">✕</button>
+          {#if chapterPreviewImage}
+            <img src={chapterPreviewImage} alt="Vergrößerte Vorschau des oberen Seitenbereichs" />
+          {/if}
+        </div>
+      </dialog>
+
       {#if uploadStep === "mapping" && uploadPreview}
         <div class="modal-subgrid">
           <div class="card">
@@ -416,6 +483,61 @@
                 <label>
                   <span>Arrangeur</span>
                   <input bind:value={form.arrangement} placeholder="Arrangeur" />
+                </label>
+                <label>
+                  <span>Verlag</span>
+                  <input bind:value={form.publisher} placeholder="Verlag" />
+                </label>
+                <label>
+                  <span>Besetzung</span>
+                  <select bind:value={form.ensemble_id}>
+                    <option value="">Keine Auswahl</option>
+                    {#each songMetadata?.ensembles ?? [] as ensemble}
+                      <option value={String(ensemble.id)}>{ensemble.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Art des Stücks</span>
+                  <select bind:value={form.kind_of_song_id}>
+                    <option value="">Keine Auswahl</option>
+                    {#each songMetadata?.kinds ?? [] as kind}
+                      <option value={String(kind.id)}>{kind.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Schwierigkeitsgrad</span>
+                  <select bind:value={form.difficulty_level_id}>
+                    <option value="">Keine Auswahl</option>
+                    {#each songMetadata?.difficulty_levels ?? [] as level}
+                      <option value={String(level.id)}>{level.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Rhythmus</span>
+                  <select bind:value={form.song_rythm_id}>
+                    <option value="">Keine Auswahl</option>
+                    {#each songMetadata?.rhythms ?? [] as rhythm}
+                      <option value={String(rhythm.id)}>{rhythm.name}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span>Physischer Aufbewahrungsort</span>
+                  <select bind:value={form.physical_storage_id}>
+                    <option value="">Keine Auswahl</option>
+                    {#each songMetadata?.physical_storages ?? [] as storage}
+                      <option value={String(storage.id)}>{storage.storage_path || storage.notes || `#${storage.id}`}</option>
+                    {/each}
+                  </select>
+                </label>
+                <label>
+                  <span><input type="checkbox" bind:checked={form.score_completed} /> Notenmaterial vollständig</span>
+                </label>
+                <label>
+                  <span><input type="checkbox" bind:checked={form.song_with_solo} /> Stück enthält ein Solo</span>
                 </label>
                 <label>
                   <span>Notizen für importierte Stimmen</span>
@@ -443,6 +565,7 @@
                     </th>
                     <th>Kapitel</th>
                     <th>Seiten</th>
+                    <th>Vorschau</th>
                     <th>Zuordnung</th>
                   </tr>
                 </thead>
@@ -454,6 +577,22 @@
                       </td>
                       <td>{chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`}</td>
                       <td>{chapterDisplayRange(chapter)}</td>
+                      <td>
+                        {#if chapter.top_preview_data_url}
+                          <button
+                            type="button"
+                            class="chapter-preview-thumb"
+                            onclick={(event) => openChapterPreview(event, chapter.top_preview_data_url)}
+                            aria-label="Vorschau vergrößern"
+                            title="Klicken, um die Vorschau zu vergrößern"
+                          >
+                            <img
+                              src={chapter.top_preview_data_url}
+                              alt={`Oberer Seitenbereich: ${chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`}`}
+                            />
+                          </button>
+                        {/if}
+                      </td>
                       <td>
                         {#if chapterMappings[index].include}
                           <div>
@@ -642,6 +781,59 @@
     border-radius: 8px;
     background: var(--color-surface-50);
     pointer-events: none;
+  }
+
+  .chapter-preview-thumb {
+    display: block;
+    width: 260px;
+    max-width: 30vw;
+    padding: 0;
+    border: 1px solid var(--color-surface-300);
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--color-surface-50);
+    cursor: zoom-in;
+  }
+
+  .chapter-preview-thumb img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .chapter-preview-dialog {
+    max-width: 98vw;
+    max-height: 98vh;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .chapter-preview-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.75);
+  }
+
+  .chapter-preview-dialog__content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    max-width: calc(98vw - 1.5rem);
+    max-height: calc(98vh - 1.5rem);
+    padding: 0.75rem;
+    overflow: auto;
+    border-radius: 8px;
+    background: white;
+  }
+
+  .chapter-preview-dialog__content img {
+    display: block;
+    width: min(96vw, 1500px);
+    height: auto;
+    max-width: 100%;
+    max-height: calc(94vh - 3rem);
+    object-fit: contain;
   }
 
   .metadata-grid {
