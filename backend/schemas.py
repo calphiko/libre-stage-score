@@ -157,13 +157,45 @@ class SongCollectionsUpdate(BaseModel):
     collection_ids: list[int] = Field(default_factory=list)
 
 
+class SongMetadataItemOut(BaseModel):
+    id: int
+    name: str
+    notes: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SongStoragePhysicalOut(BaseModel):
+    id: int
+    storage_path: str | None = None
+    notes: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class SongMetadataOptionsOut(BaseModel):
+    ensembles: list[SongMetadataItemOut]
+    physical_storages: list[SongStoragePhysicalOut]
+    kinds: list[SongMetadataItemOut]
+    difficulty_levels: list[SongMetadataItemOut]
+    rhythms: list[SongMetadataItemOut]
+
+
 class SongBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=512)
     tune: str | None = Field(default=None, max_length=32)
     composer: str | None = Field(default=None, max_length=1024)
     arrangement: str | None = Field(default=None, max_length=1024)
+    publisher: str | None = Field(default=None, max_length=1024)
     length: time | None = None
     notes: str | None = None
+    physical_storage_id: int | None = Field(default=None, ge=1)
+    ensemble_id: int | None = Field(default=None, ge=1)
+    kind_of_song_id: int | None = Field(default=None, ge=1)
+    difficulty_level_id: int | None = Field(default=None, ge=1)
+    song_rythm_id: int | None = Field(default=None, ge=1)
+    score_completed: bool = False
+    song_with_solo: bool = False
 
 
 class SongCreate(SongBase):
@@ -215,6 +247,7 @@ class ScoreUploadChapterOut(BaseModel):
     suggested_instrument_id: int | None = None
     suggested_instrument_name: str | None = None
     suggested_instrument_tuning: str | None = None
+    top_preview_data_url: str | None = None
 
 
 class ScoreUploadPreviewOut(BaseModel):
@@ -251,6 +284,14 @@ class SongUploadCommitRequest(BaseModel):
     tune: str | None = Field(default=None, max_length=32)
     composer: str | None = Field(default=None, max_length=1024)
     arrangement: str | None = Field(default=None, max_length=1024)
+    publisher: str | None = Field(default=None, max_length=1024)
+    physical_storage_id: int | None = Field(default=None, ge=1)
+    ensemble_id: int | None = Field(default=None, ge=1)
+    kind_of_song_id: int | None = Field(default=None, ge=1)
+    difficulty_level_id: int | None = Field(default=None, ge=1)
+    song_rythm_id: int | None = Field(default=None, ge=1)
+    score_completed: bool = False
+    song_with_solo: bool = False
     score_notes: str | None = None
     mappings: list[ScoreUploadMappingIn] = Field(default_factory=list)
 
