@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -36,6 +37,7 @@ async def user_is_editor_or_admin(request: Request, db: Session = Depends(auth.g
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(user_is_editor_or_admin)])
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCORES_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "scores"
+ORIGINAL_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "upload"
 
 
 def _score_to_out(score: models.Score, song: models.Song, instrument: models.Instrument) -> schemas.ScoreOut:
@@ -408,6 +410,121 @@ def _preview_pdf_path(upload_token: str) -> Path:
 
 def _preview_metadata_path(upload_token: str) -> Path:
     return _incoming_upload_dir() / f"{upload_token}.json"
+
+
+def _render_page_top_preview(source_file: Path, page_index: int, page: Any) -> str:
+    renderer = shutil.which("pdftoppm")
+    if not renderer:
+        raise HTTPException(status_code=503, detail="PDF preview requires the pdftoppm renderer")
+
+    preview_width = 900
+    page_width = float(page.mediabox.width)
+    page_height = float(page.mediabox.height)
+    if page_width <= 0 or page_height <= 0:
+        raise HTTPException(status_code=400, detail="PDF page has invalid dimensions")
+    preview_height = round(preview_width * page_height / page_width)
+    crop_height = max(1, round(preview_height / 5))
+
+    with tempfile.TemporaryDirectory(prefix="stage-pdf-preview-") as tmpdir:
+        output_prefix = Path(tmpdir) / "page"
+        result = subprocess.run(
+            [
+                renderer,
+                "-f",
+                str(page_index + 1),
+                "-l",
+                str(page_index + 1),
+                "-scale-to-x",
+                str(preview_width),
+                "-scale-to-y",
+                "-1",
+                "-x",
+                "0",
+                "-y",
+                "0",
+                "-W",
+                str(preview_width),
+                "-H",
+                str(crop_height),
+                "-png",
+                str(source_file),
+                str(output_prefix),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        image_paths = sorted(output_prefix.parent.glob(f"{output_prefix.name}-*.png"))
+        if result.returncode != 0 or len(image_paths) != 1:
+            error_detail = result.stderr.strip() or "renderer did not produce exactly one preview image"
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not render PDF chapter preview: {error_detail}",
+            )
+        image_path = image_paths[0]
+        image_data = base64.b64encode(image_path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{image_data}"
+
+
+def _archive_original_upload(
+    source_file: Path,
+    *,
+    source_filename: str,
+    song: models.Song,
+    uploaded_by_user_id: int,
+    db: Session,
+) -> tuple[models.SongUploads, Path]:
+    ORIGINAL_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    original_name = Path(source_filename.replace("\\", "/")).name
+    original_stem = _safe_filename_part(Path(original_name).stem)[:100] or "upload"
+    archive_filename = f"{secrets.token_hex(16)}_{original_stem}.pdf"
+    archive_path = ORIGINAL_UPLOAD_DIR / archive_filename
+    shutil.copyfile(source_file, archive_path)
+    storage_path = f"upload/{archive_filename}"
+    record = models.SongUploads(
+        song_id=song.id,
+        upload_path=storage_path,
+        uploaded_by_user_id=uploaded_by_user_id,
+        notes=json.dumps(
+            {
+                "original_filename": original_name,
+                "sha256": _hash_file(archive_path),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    db.add(record)
+    return record, archive_path
+
+
+def _commit_upload_with_original(
+    source_file: Path,
+    *,
+    source_filename: str,
+    song: models.Song,
+    uploaded_by_user_id: int,
+    db: Session,
+) -> None:
+    _, archive_path = _archive_original_upload(
+        source_file,
+        source_filename=source_filename,
+        song=song,
+        uploaded_by_user_id=uploaded_by_user_id,
+        db=db,
+    )
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        archive_path.unlink(missing_ok=True)
+        raise
+
+
+def _upload_user_id(request: Request, db: Session) -> int:
+    user_id = auth.get_current_user(request, db).get("user_id")
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Authenticated user not found")
+    return int(user_id)
 
 
 def _outline_chapters(outline_entries: list[tuple[str, int]], page_count: int) -> list[dict[str, Any]]:
@@ -1404,6 +1521,19 @@ def list_collections(db: Session = Depends(auth.get_db)):
     return db.query(models.Collection).order_by(models.Collection.name.asc()).all()
 
 
+@router.get("/song-metadata", response_model=schemas.SongMetadataOptionsOut)
+def list_song_metadata(db: Session = Depends(auth.get_db)):
+    return {
+        "ensembles": db.query(models.Ensemble).order_by(models.Ensemble.name.asc()).all(),
+        "physical_storages": db.query(models.SongStoragePhysical)
+        .order_by(models.SongStoragePhysical.storage_path.asc())
+        .all(),
+        "kinds": db.query(models.KindOfSong).order_by(models.KindOfSong.name.asc()).all(),
+        "difficulty_levels": db.query(models.DifficultyLevel).order_by(models.DifficultyLevel.name.asc()).all(),
+        "rhythms": db.query(models.SongRythm).order_by(models.SongRythm.name.asc()).all(),
+    }
+
+
 @router.post("/collections", response_model=schemas.CollectionOut)
 def create_collection(collection: schemas.CollectionCreate, db: Session = Depends(auth.get_db)):
     existing = db.query(models.Collection).filter(models.Collection.name == collection.name).first()
@@ -1469,8 +1599,23 @@ def list_songs(request: Request, view: str | None = None, db: Session = Depends(
     )
 
 
+def _validate_song_metadata_references(payload: Any, db: Session) -> None:
+    references = (
+        ("physical_storage_id", models.SongStoragePhysical),
+        ("ensemble_id", models.Ensemble),
+        ("kind_of_song_id", models.KindOfSong),
+        ("difficulty_level_id", models.DifficultyLevel),
+        ("song_rythm_id", models.SongRythm),
+    )
+    for field, model in references:
+        value = getattr(payload, field)
+        if value is not None and db.query(model).filter(model.id == value).first() is None:
+            raise HTTPException(status_code=404, detail=f"{field} reference not found")
+
+
 @router.post("/songs", response_model=schemas.SongOut)
 def create_song(song: schemas.SongCreate, db: Session = Depends(auth.get_db)):
+    _validate_song_metadata_references(song, db)
     db_song = models.Song(**song.model_dump())
     db.add(db_song)
     db.commit()
@@ -1484,6 +1629,7 @@ def update_song(song_id: int, song: schemas.SongUpdate, db: Session = Depends(au
     if not db_song:
         raise HTTPException(status_code=404, detail="Song not found")
 
+    _validate_song_metadata_references(song, db)
     for key, value in song.model_dump().items():
         setattr(db_song, key, value)
     db.commit()
@@ -1689,6 +1835,11 @@ def upload_score_pdf_preview(
                 suggested_instrument_id=chapter.get("suggested_instrument_id"),
                 suggested_instrument_name=chapter.get("suggested_instrument_name"),
                 suggested_instrument_tuning=chapter.get("suggested_instrument_tuning"),
+                top_preview_data_url=_render_page_top_preview(
+                    source_file,
+                    chapter["start_page"],
+                    reader.pages[chapter["start_page"]],
+                ),
             )
             for index, chapter in enumerate(chapters)
         ],
@@ -1753,6 +1904,11 @@ def upload_new_song_pdf_preview(
                 suggested_instrument_id=chapter.get("suggested_instrument_id"),
                 suggested_instrument_name=chapter.get("suggested_instrument_name"),
                 suggested_instrument_tuning=chapter.get("suggested_instrument_tuning"),
+                top_preview_data_url=_render_page_top_preview(
+                    source_file,
+                    chapter["start_page"],
+                    reader.pages[chapter["start_page"]],
+                ),
             )
             for index, chapter in enumerate(chapters)
         ],
@@ -1760,7 +1916,12 @@ def upload_new_song_pdf_preview(
 
 
 @router.post("/scores/upload/commit", response_model=list[schemas.ScoreOut])
-def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Session = Depends(auth.get_db)):
+def upload_score_pdf_commit(
+    payload: schemas.ScoreUploadCommitRequest,
+    request: Request,
+    db: Session = Depends(auth.get_db),
+):
+    uploaded_by_user_id = _upload_user_id(request, db)
     song = db.query(models.Song).filter(models.Song.id == payload.song_id).first()
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
@@ -1771,6 +1932,9 @@ def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Sessi
 
     metadata = _load_preview_metadata(payload.upload_token)
     chapters = metadata.get("chapters", [])
+    source_filename = metadata.get("source_filename")
+    if not isinstance(source_filename, str) or not source_filename:
+        raise HTTPException(status_code=400, detail="Upload session is missing the original filename")
     if not isinstance(chapters, list) or not chapters:
         raise HTTPException(status_code=400, detail="Upload session has no chapter data")
 
@@ -1784,7 +1948,13 @@ def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Sessi
         db=db,
     )
 
-    db.commit()
+    _commit_upload_with_original(
+        source_file,
+        source_filename=source_filename,
+        song=song,
+        uploaded_by_user_id=uploaded_by_user_id,
+        db=db,
+    )
     if source_file.exists():
         source_file.unlink()
     metadata_path = _preview_metadata_path(payload.upload_token)
@@ -1799,13 +1969,21 @@ def upload_score_pdf_commit(payload: schemas.ScoreUploadCommitRequest, db: Sessi
 
 
 @router.post("/songs/upload/commit", response_model=schemas.SongUploadCommitOut)
-def upload_new_song_pdf_commit(payload: schemas.SongUploadCommitRequest, db: Session = Depends(auth.get_db)):
+def upload_new_song_pdf_commit(
+    payload: schemas.SongUploadCommitRequest,
+    request: Request,
+    db: Session = Depends(auth.get_db),
+):
+    uploaded_by_user_id = _upload_user_id(request, db)
     source_file = _preview_pdf_path(payload.upload_token)
     if not source_file.exists():
         raise HTTPException(status_code=404, detail="Upload file not found")
 
     metadata = _load_preview_metadata(payload.upload_token)
     chapters = metadata.get("chapters", [])
+    source_filename = metadata.get("source_filename")
+    if not isinstance(source_filename, str) or not source_filename:
+        raise HTTPException(status_code=400, detail="Upload session is missing the original filename")
     if not isinstance(chapters, list) or not chapters:
         raise HTTPException(status_code=400, detail="Upload session has no chapter data")
 
@@ -1815,11 +1993,20 @@ def upload_new_song_pdf_commit(payload: schemas.SongUploadCommitRequest, db: Ses
     if not song_name:
         raise HTTPException(status_code=400, detail="Song name must not be empty")
 
+    _validate_song_metadata_references(payload, db)
     song = models.Song(
         name=song_name,
         tune=payload.tune.strip() if payload.tune and payload.tune.strip() else None,
         composer=payload.composer.strip() if payload.composer and payload.composer.strip() else None,
         arrangement=payload.arrangement.strip() if payload.arrangement and payload.arrangement.strip() else None,
+        publisher=payload.publisher.strip() if payload.publisher and payload.publisher.strip() else None,
+        physical_storage_id=payload.physical_storage_id,
+        ensemble_id=payload.ensemble_id,
+        kind_of_song_id=payload.kind_of_song_id,
+        difficulty_level_id=payload.difficulty_level_id,
+        song_rythm_id=payload.song_rythm_id,
+        score_completed=payload.score_completed,
+        song_with_solo=payload.song_with_solo,
         notes=None,
     )
     db.add(song)
@@ -1833,7 +2020,13 @@ def upload_new_song_pdf_commit(payload: schemas.SongUploadCommitRequest, db: Ses
         db=db,
     )
 
-    db.commit()
+    _commit_upload_with_original(
+        source_file,
+        source_filename=source_filename,
+        song=song,
+        uploaded_by_user_id=uploaded_by_user_id,
+        db=db,
+    )
     db.refresh(song)
     if source_file.exists():
         source_file.unlink()
