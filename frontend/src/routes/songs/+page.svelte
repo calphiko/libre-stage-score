@@ -1,12 +1,13 @@
 <script>
   import { goto } from "$app/navigation";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import {
     deleteScore,
     createSong,
     deleteSong,
     getCollections,
     getInstruments,
+    getSongMetadata,
     getScores,
     getScoreDocumentUrl,
     getSongs,
@@ -29,6 +30,7 @@
   let songs = [];
   let collections = [];
   let instruments = [];
+  let songMetadata = { ensembles: [], physical_storages: [], kinds: [], difficulty_levels: [], rhythms: [] };
   const EDITOR_MODE_STORAGE_KEY = "editor-mode-view";
 
   let editorViewMode = false;
@@ -48,9 +50,26 @@
   };
   let uploadStep = "select";
   let uploadPreview = null;
+  let chapterPreviewImage = null;
+  let chapterPreviewDialog;
   let chapterMappings = [];
   let isDragActive = false;
-  let songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
+  let songForm = {
+    name: "",
+    tune: "",
+    composer: "",
+    arrangement: "",
+    publisher: "",
+    length: "",
+    notes: "",
+    physical_storage_id: "",
+    ensemble_id: "",
+    kind_of_song_id: "",
+    difficulty_level_id: "",
+    song_rythm_id: "",
+    score_completed: false,
+    song_with_solo: false,
+  };
   let editingSongId = null;
   let songFormMode = "create";
 
@@ -65,7 +84,22 @@
   }
 
   function resetSongForm() {
-    songForm = { name: "", tune: "", composer: "", arrangement: "", length: "", notes: "" };
+    songForm = {
+      name: "",
+      tune: "",
+      composer: "",
+      arrangement: "",
+      publisher: "",
+      length: "",
+      notes: "",
+      physical_storage_id: "",
+      ensemble_id: "",
+      kind_of_song_id: "",
+      difficulty_level_id: "",
+      song_rythm_id: "",
+      score_completed: false,
+      song_with_solo: false,
+    };
     editingSongId = null;
     songFormMode = "create";
   }
@@ -111,15 +145,17 @@
       syncEditorModeState();
 
       const view = effectiveSongView();
-      const [loadedSongs, loadedInstruments, loadedCollections] = await Promise.all([
+      const [loadedSongs, loadedInstruments, loadedCollections, loadedSongMetadata] = await Promise.all([
         getSongs(view),
         getInstruments(view),
         getCollections(),
+        getSongMetadata(),
       ]);
 
       songs = loadedSongs;
       instruments = loadedInstruments;
       collections = normalizeCollections(loadedCollections);
+      songMetadata = loadedSongMetadata;
     } catch (err) {
       error = err.message;
       goto("/");
@@ -197,6 +233,7 @@
     };
     uploadStep = "select";
     uploadPreview = null;
+    chapterPreviewImage = null;
     chapterMappings = [];
     isDragActive = false;
   }
@@ -300,6 +337,22 @@
 
   function chapterDisplayRange(chapter) {
     return `${chapter.start_page + 1}-${chapter.end_page}`;
+  }
+
+  async function openChapterPreview(event, image) {
+    event.stopPropagation();
+    chapterPreviewImage = image;
+    await tick();
+    if (chapterPreviewDialog && !chapterPreviewDialog.open) {
+      chapterPreviewDialog.showModal();
+    }
+  }
+
+  function closeChapterPreview(event = null) {
+    event?.stopPropagation();
+    if (chapterPreviewDialog?.open) {
+      chapterPreviewDialog.close();
+    }
   }
 
   function setAllChapterImportSelection(include) {
@@ -453,8 +506,16 @@
       tune: song.tune ?? "",
       composer: song.composer ?? "",
       arrangement: song.arrangement ?? "",
+      publisher: song.publisher ?? "",
       length: song.length ?? "",
       notes: song.notes ?? "",
+      physical_storage_id: song.physical_storage_id == null ? "" : String(song.physical_storage_id),
+      ensemble_id: song.ensemble_id == null ? "" : String(song.ensemble_id),
+      kind_of_song_id: song.kind_of_song_id == null ? "" : String(song.kind_of_song_id),
+      difficulty_level_id: song.difficulty_level_id == null ? "" : String(song.difficulty_level_id),
+      song_rythm_id: song.song_rythm_id == null ? "" : String(song.song_rythm_id),
+      score_completed: Boolean(song.score_completed),
+      song_with_solo: Boolean(song.song_with_solo),
     };
     showSongModal = true;
   }
@@ -467,8 +528,16 @@
       tune: songForm.tune.trim() || null,
       composer: songForm.composer.trim() || null,
       arrangement: songForm.arrangement.trim() || null,
+      publisher: songForm.publisher.trim() || null,
       length: songForm.length ? songForm.length : null,
       notes: songForm.notes.trim() || null,
+      physical_storage_id: songForm.physical_storage_id ? Number(songForm.physical_storage_id) : null,
+      ensemble_id: songForm.ensemble_id ? Number(songForm.ensemble_id) : null,
+      kind_of_song_id: songForm.kind_of_song_id ? Number(songForm.kind_of_song_id) : null,
+      difficulty_level_id: songForm.difficulty_level_id ? Number(songForm.difficulty_level_id) : null,
+      song_rythm_id: songForm.song_rythm_id ? Number(songForm.song_rythm_id) : null,
+      score_completed: Boolean(songForm.score_completed),
+      song_with_solo: Boolean(songForm.song_with_solo),
     };
 
     if (!payload.name) {
@@ -560,6 +629,59 @@
     min-height: 70vh;
     max-height: 90vh;
     overflow: auto;
+  }
+
+  .chapter-preview-thumb {
+    display: block;
+    width: 260px;
+    max-width: 30vw;
+    padding: 0;
+    border: 1px solid var(--color-surface-300);
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--color-surface-50);
+    cursor: zoom-in;
+  }
+
+  .chapter-preview-thumb img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .chapter-preview-dialog {
+    max-width: 98vw;
+    max-height: 98vh;
+    padding: 0;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .chapter-preview-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.75);
+  }
+
+  .chapter-preview-dialog__content {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.5rem;
+    max-width: calc(98vw - 1.5rem);
+    max-height: calc(98vh - 1.5rem);
+    padding: 0.75rem;
+    overflow: auto;
+    border-radius: 8px;
+    background: white;
+  }
+
+  .chapter-preview-dialog__content img {
+    display: block;
+    width: min(96vw, 1500px);
+    height: auto;
+    max-width: 100%;
+    max-height: calc(94vh - 3rem);
+    object-fit: contain;
   }
 
   .mapping-hint {
@@ -894,6 +1016,7 @@
                   </th>
                   <th>Kapitel</th>
                   <th>Seiten</th>
+                  <th>Vorschau</th>
                   <th>Zuordnung</th>
                 </tr>
               </thead>
@@ -905,6 +1028,22 @@
                     </td>
                     <td>{chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`}</td>
                     <td>{chapterDisplayRange(chapter)}</td>
+                    <td>
+                      {#if chapter.top_preview_data_url}
+                        <button
+                          type="button"
+                          class="chapter-preview-thumb"
+                          onclick={(event) => openChapterPreview(event, chapter.top_preview_data_url)}
+                          aria-label="Vorschau vergrößern"
+                          title="Klicken, um die Vorschau zu vergrößern"
+                        >
+                          <img
+                            src={chapter.top_preview_data_url}
+                            alt={`Oberer Seitenbereich: ${chapter.original_chapter_title ?? chapter.chapter_title ?? `Kapitel ${chapter.chapter_index + 1}`}`}
+                          />
+                        </button>
+                      {/if}
+                    </td>
                     <td>
                       {#if chapterMappings[index].include}
                         <div>
@@ -981,6 +1120,23 @@
   </dialog>
 {/if}
 
+<dialog
+  bind:this={chapterPreviewDialog}
+  class="chapter-preview-dialog"
+  aria-label="Vergrößerte Stimmvorschau"
+  onclick={(event) => {
+    if (event.target === event.currentTarget) closeChapterPreview(event);
+  }}
+  onclose={() => (chapterPreviewImage = null)}
+>
+  <div class="chapter-preview-dialog__content">
+    <button type="button" class="secondary" onclick={closeChapterPreview} aria-label="Schließen">✕</button>
+    {#if chapterPreviewImage}
+      <img src={chapterPreviewImage} alt="Vergrößerte Vorschau des oberen Seitenbereichs" />
+    {/if}
+  </div>
+</dialog>
+
 {#if canManageSongs() && showSongModal}
   <dialog open class="app-dialog">
     <div class="row" style="justify-content: space-between; align-items: center;">
@@ -1007,14 +1163,77 @@
           <label for="song-arrangement">Arrangement</label>
           <input id="song-arrangement" bind:value={songForm.arrangement} />
         </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-publisher">Verlag</label>
+          <input id="song-publisher" bind:value={songForm.publisher} />
+        </div>
         <div style="flex: 1 1 160px;">
           <label for="song-length">Länge</label>
           <input id="song-length" type="time" step="1" bind:value={songForm.length} />
+        </div>
+      </div>
+      <div class="row" style="margin-top: 1rem;">
+        <div style="flex: 1 1 220px;">
+          <label for="song-ensemble">Besetzung</label>
+          <select id="song-ensemble" bind:value={songForm.ensemble_id}>
+            <option value="">Keine Auswahl</option>
+            {#each songMetadata.ensembles as ensemble}
+              <option value={String(ensemble.id)}>{ensemble.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-kind">Art des Stücks</label>
+          <select id="song-kind" bind:value={songForm.kind_of_song_id}>
+            <option value="">Keine Auswahl</option>
+            {#each songMetadata.kinds as kind}
+              <option value={String(kind.id)}>{kind.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-difficulty">Schwierigkeitsgrad</label>
+          <select id="song-difficulty" bind:value={songForm.difficulty_level_id}>
+            <option value="">Keine Auswahl</option>
+            {#each songMetadata.difficulty_levels as level}
+              <option value={String(level.id)}>{level.name}</option>
+            {/each}
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top: 1rem;">
+        <div style="flex: 1 1 220px;">
+          <label for="song-rhythm">Rhythmus</label>
+          <select id="song-rhythm" bind:value={songForm.song_rythm_id}>
+            <option value="">Keine Auswahl</option>
+            {#each songMetadata.rhythms as rhythm}
+              <option value={String(rhythm.id)}>{rhythm.name}</option>
+            {/each}
+          </select>
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label for="song-storage">Physischer Aufbewahrungsort</label>
+          <select id="song-storage" bind:value={songForm.physical_storage_id}>
+            <option value="">Keine Auswahl</option>
+            {#each songMetadata.physical_storages as storage}
+              <option value={String(storage.id)}>{storage.storage_path || storage.notes || `#${storage.id}`}</option>
+            {/each}
+          </select>
         </div>
         <div style="flex: 1 1 220px;">
           <label for="song-notes">Notizen</label>
           <input id="song-notes" bind:value={songForm.notes} />
         </div>
+      </div>
+      <div class="row" style="margin-top: 1rem;">
+        <label style="min-width: 220px;">
+          <input type="checkbox" bind:checked={songForm.score_completed} />
+          Notenmaterial vollständig
+        </label>
+        <label style="min-width: 220px;">
+          <input type="checkbox" bind:checked={songForm.song_with_solo} />
+          Stück enthält ein Solo
+        </label>
       </div>
       <p style="margin-top: 1rem;">
         <button onclick={saveSong} aria-label={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"} title={songFormMode === "edit" ? "Änderungen speichern" : "Stück anlegen"}><SaveIcon /> {songFormMode === "edit" ? "Speichern" : "Anlegen"}</button>
