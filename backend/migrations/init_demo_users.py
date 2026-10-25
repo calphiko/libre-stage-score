@@ -43,6 +43,11 @@ def run() -> None:
     db.query(models.Collection).delete()
     db.query(models.Group).delete()
     db.query(models.Song).delete()
+    db.query(models.Ensemble).delete()
+    db.query(models.SongStoragePhysical).delete()
+    db.query(models.KindOfSong).delete()
+    db.query(models.DifficultyLevel).delete()
+    db.query(models.SongRythm).delete()
     db.query(models.Instrument).delete()
     db.query(models.User).delete()
     if admin.SCORES_UPLOAD_DIR.exists():
@@ -208,9 +213,57 @@ def run() -> None:
                 )
             )
 
+    ensembles = [
+        models.Ensemble(name="Blasorchester", notes="Demo-Besetzung"),
+    ]
+    physical_storages = [
+        models.SongStoragePhysical(storage_path="Notenarchiv/Regal A-01", notes="Demo-Aufbewahrungsort"),
+        models.SongStoragePhysical(storage_path="Notenarchiv/Regal K-01", notes="Demo-Aufbewahrungsort"),
+    ]
+    song_kinds = [
+        models.KindOfSong(name="Marsch", notes="Demo-Kategorie"),
+        models.KindOfSong(name="Kirchenmusik", notes="Demo-Kategorie"),
+    ]
+    difficulty_levels = [
+        models.DifficultyLevel(name="Mittel", notes="Demo-Schwierigkeitsgrad"),
+        models.DifficultyLevel(name="Leicht", notes="Demo-Schwierigkeitsgrad"),
+    ]
+    song_rythms = [
+        models.SongRythm(name="Marsch", notes="Demo-Rhythmus"),
+        models.SongRythm(name="4/4", notes="Demo-Rhythmus"),
+    ]
+    db.add_all(ensembles + physical_storages + song_kinds + difficulty_levels + song_rythms)
+    db.flush()
+
     songs = [
-        models.Song(name="Highland Cathedral", tune="Bb", composer="Korb/Korb", arrangement="Blasorchester"),
-        models.Song(name="Amazing Grace", tune="F", composer="Traditional", arrangement="Blasorchester"),
+        models.Song(
+            name="Highland Cathedral",
+            tune="Bb",
+            composer="Korb/Korb",
+            arrangement="Blasorchester",
+            publisher="Demo Musikverlag",
+            physical_storage_id=physical_storages[0].id,
+            ensemble_id=ensembles[0].id,
+            kind_of_song_id=song_kinds[0].id,
+            difficulty_level_id=difficulty_levels[0].id,
+            song_rythm_id=song_rythms[0].id,
+            score_completed=False,
+            song_with_solo=False,
+        ),
+        models.Song(
+            name="Amazing Grace",
+            tune="F",
+            composer="Traditional",
+            arrangement="Blasorchester",
+            publisher="Gemeinfrei / traditionell",
+            physical_storage_id=physical_storages[1].id,
+            ensemble_id=ensembles[0].id,
+            kind_of_song_id=song_kinds[1].id,
+            difficulty_level_id=difficulty_levels[1].id,
+            song_rythm_id=song_rythms[1].id,
+            score_completed=False,
+            song_with_solo=False,
+        ),
     ]
     db.add_all(songs)
     db.flush()
@@ -249,7 +302,7 @@ def run() -> None:
     print("Seeded demo instruments and user assignments")
     print("Seeded demo register groups and group instrument assignments")
     print("Seeded demo collections and song assignments")
-    print("Seeded demo songs and scores")
+    print("Seeded demo song metadata, songs, and scores")
 
 
 if __name__ == "__main__":
