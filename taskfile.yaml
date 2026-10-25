@@ -19,6 +19,12 @@ tasks:
       - uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     desc: Start FastAPI backend
 
+  backend-debug:
+    cmds:
+      - task db:prepare
+      - uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug --access-log
+    desc: Start FastAPI backend with verbose request logging
+
   frontend-dev:
     env:
       VITE_API_URL: "http://localhost:8000"
@@ -60,4 +66,3 @@ tasks:
     cmds:
       - uv run python backend/migrations/init_demo_users.py
     desc: Seed demo users
-
