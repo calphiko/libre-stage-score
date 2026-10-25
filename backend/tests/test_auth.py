@@ -1,8 +1,14 @@
+import base64
+import json
+import struct
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfWriter
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -94,6 +100,25 @@ def test_extract_song_metadata_from_pdf_prefers_title_and_arrangement_lines():
     assert metadata["name"] == "The Great Symphony"
     assert metadata["composer"] == "Anna Beispiel"
     assert metadata["arrangement"] == "Max Muster"
+
+
+def test_render_page_top_preview_accepts_zero_padded_page_filename(monkeypatch, tmp_path):
+    source_file = tmp_path / "source.pdf"
+    source_file.write_bytes(b"%PDF-test")
+    output_bytes = b"preview-image"
+
+    def render_preview(args, **kwargs):
+        output_prefix = Path(args[-1])
+        (output_prefix.parent / f"{output_prefix.name}-001.png").write_bytes(output_bytes)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(admin.shutil, "which", lambda _: "/usr/bin/pdftoppm")
+    monkeypatch.setattr(admin.subprocess, "run", render_preview)
+    page = SimpleNamespace(mediabox=SimpleNamespace(width=600, height=850))
+
+    preview = admin._render_page_top_preview(source_file, 0, page)
+
+    assert preview == f"data:image/png;base64,{base64.b64encode(output_bytes).decode('ascii')}"
 
 
 def test_extract_song_metadata_from_pdf_handles_first_title_line_and_arrangeur_label():
@@ -611,3 +636,109 @@ def test_storage_rescrape_updates_changed_hash():
                 db.delete(instrument)
             db.commit()
             db.close()
+
+
+def test_song_pdf_upload_archives_original_and_records_metadata(monkeypatch, tmp_path):
+    db = SessionLocal()
+    original_scores_dir = admin.SCORES_UPLOAD_DIR
+    original_upload_dir = admin.ORIGINAL_UPLOAD_DIR
+    admin.SCORES_UPLOAD_DIR = tmp_path / "scores"
+    admin.ORIGINAL_UPLOAD_DIR = tmp_path / "upload"
+    try:
+        user = models.User(
+            user_name="original_upload_admin",
+            user_pw="hashedpw",
+            user_group="admin",
+            email="original-upload@example.com",
+            clear_name="Original Upload Admin",
+            status="active",
+        )
+        db.add(user)
+        db.commit()
+        token = auth.create_access_token({"sub": user.user_name, "role": user.user_group})
+        monkeypatch.setattr(
+            admin,
+            "_preview_chapters_from_pdf",
+            lambda reader, db, song_name: [
+                {"chapter_title": "Flute", "start_page": 0, "end_page": 1}
+            ],
+        )
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=595, height=842)
+        pdf_buffer = BytesIO()
+        writer.write(pdf_buffer)
+        original_pdf = pdf_buffer.getvalue()
+        headers = {"Authorization": f"Bearer {token}"}
+        preview = client.post(
+            "/admin/songs/upload/preview",
+            headers=headers,
+            files={"file": ("original-score.pdf", original_pdf, "application/pdf")},
+        )
+        assert preview.status_code == 200
+        preview_image = preview.json()["chapters"][0]["top_preview_data_url"]
+        assert preview_image.startswith("data:image/png;base64,")
+        image_bytes = base64.b64decode(preview_image.partition(",")[2])
+        assert struct.unpack(">II", image_bytes[16:24]) == (900, 255)
+
+        response = client.post(
+            "/admin/songs/upload/commit",
+            headers=headers,
+            json={
+                "upload_token": preview.json()["upload_token"],
+                "name": "Original Upload Test Song",
+                "mappings": [
+                    {
+                        "chapter_index": 0,
+                        "include": True,
+                        "create_instrument_name": "Original Upload Test Flute",
+                        "create_instrument_tuning": "C",
+                    }
+                ],
+            },
+        )
+        assert response.status_code == 200
+
+        record = db.query(models.SongUploads).filter(models.SongUploads.uploaded_by_user_id == user.id).one()
+        original_file = admin.ORIGINAL_UPLOAD_DIR / Path(record.upload_path).name
+        upload_notes = json.loads(record.notes)
+        assert upload_notes["original_filename"] == "original-score.pdf"
+        assert upload_notes["sha256"] == admin._hash_file(original_file)
+        assert original_file.read_bytes() == original_pdf
+        assert response.json()["song"]["id"] == record.song_id
+        assert record.uploaded_at is not None
+
+        score_preview = client.post(
+            "/admin/scores/upload/preview",
+            headers=headers,
+            data={"song_id": str(record.song_id)},
+            files={"file": ("additional-score.pdf", original_pdf, "application/pdf")},
+        )
+        assert score_preview.status_code == 200
+        assert score_preview.json()["chapters"][0]["top_preview_data_url"].startswith("data:image/png;base64,")
+        score_upload = client.post(
+            "/admin/scores/upload/commit",
+            headers=headers,
+            json={
+                "song_id": record.song_id,
+                "upload_token": score_preview.json()["upload_token"],
+                "mappings": [
+                    {
+                        "chapter_index": 0,
+                        "include": True,
+                        "instrument_id": response.json()["scores"][0]["instrument_id"],
+                    }
+                ],
+            },
+        )
+        assert score_upload.status_code == 200
+        records = db.query(models.SongUploads).filter(models.SongUploads.uploaded_by_user_id == user.id).all()
+        assert len(records) == 2
+        uploaded_names = {json.loads(upload.notes)["original_filename"] for upload in records}
+        assert uploaded_names == {"original-score.pdf", "additional-score.pdf"}
+        assert all((admin.ORIGINAL_UPLOAD_DIR / Path(upload.upload_path).name).exists() for upload in records)
+    finally:
+        db.rollback()
+        admin.SCORES_UPLOAD_DIR = original_scores_dir
+        admin.ORIGINAL_UPLOAD_DIR = original_upload_dir
+        db.close()
