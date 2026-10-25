@@ -175,18 +175,63 @@ class Collection(Base):
         back_populates="collections",
     )
 
+class Ensemble(Base):
+    __tablename__ = "ensembles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class SongStoragePhysical(Base):
+    __tablename__ = "song_storage_physical"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    storage_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class KindOfSong(Base):
+    __tablename__ = "kind_of_song"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class DifficultyLevel(Base):
+    __tablename__ = "difficulty_level"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class SongRythm(Base):
+    __tablename__ = "song_rythm"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+class SongUploads(Base):
+    __tablename__ = "song_uploads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    song_id: Mapped[int] = mapped_column(Integer, ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
+    upload_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    uploaded_by_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 class Song(Base):
     __tablename__ = "songs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(512), unique=False, index=True, nullable=False)
+    arrangement: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     tune: Mapped[str | None] = mapped_column(String(32), nullable=True)
     composer: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
-    arrangement: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
+    publisher: Mapped[str | None] = mapped_column(String(1024), nullable=True, index=True)
     length: Mapped[time | None] = mapped_column(Time, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-
+    physical_storage_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("song_storage_physical.id"), nullable=True)
+    ensemble_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ensembles.id"), nullable=True)
+    kind_of_song_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("kind_of_song.id"), nullable=True)
+    difficulty_level_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("difficulty_level.id"), nullable=True)
+    song_rythm_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("song_rythm.id"), nullable=True)
+    score_completed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    song_with_solo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     collections: Mapped[list["Collection"]] = relationship(
         "Collection",
         secondary="song_collections",
