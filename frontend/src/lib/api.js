@@ -284,6 +284,11 @@ export async function getCollections() {
   return res.json();
 }
 
+export async function getSongMetadata() {
+  const res = await fetchWithAuth(`${API_URL}/admin/song-metadata`, { method: "GET" });
+  return res.json();
+}
+
 export async function createCollection(data) {
   const res = await fetchWithAuth(`${API_URL}/admin/collections`, {
     method: "POST",
