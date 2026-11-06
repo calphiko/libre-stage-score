@@ -1,6 +1,7 @@
 export const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
 
 let csrfTokenCache = null;
+let refreshPromise = null;
 
 function apiUrl(path) {
   return `${API_URL}${path}`;
@@ -69,13 +70,23 @@ async function fetchWithAuth(url, options = {}) {
 
   let res = await fetchApi(url, requestOptions);
   if (res.status === 401) {
-    const refresh = await fetchApi(apiUrl("/refresh"), {
-      method: "POST",
-      credentials: "include",
-    });
-    if (refresh.ok) {
-      const refreshed = await refresh.json().catch(() => ({}));
-      rememberCsrfToken(refreshed.csrf_token);
+    if (!refreshPromise) {
+      refreshPromise = fetchApi(apiUrl("/refresh"), {
+        method: "POST",
+        credentials: "include",
+      })
+        .then(async (refresh) => {
+          if (!refresh.ok) return false;
+          const refreshed = await refresh.json().catch(() => ({}));
+          rememberCsrfToken(refreshed.csrf_token);
+          return true;
+        })
+        .finally(() => {
+          refreshPromise = null;
+        });
+    }
+
+    if (await refreshPromise) {
       if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
         const token = currentCsrfToken();
         if (token) requestOptions.headers["X-CSRF-Token"] = token;
