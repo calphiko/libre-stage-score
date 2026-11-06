@@ -12,6 +12,7 @@
     getSongMetadata,
     getScores,
     getScoreDocumentUrl,
+    openScoreInSystemViewer,
     getSongs,
     getUser,
     patchSong,
@@ -93,6 +94,16 @@
   $: if (ok) {
     showToast(ok, "ok");
     ok = "";
+  }
+
+  async function openScore(event, score) {
+    if (import.meta.env.VITE_DESKTOP !== "1") return;
+    event.preventDefault();
+    try {
+      await openScoreInSystemViewer(score.id);
+    } catch (openError) {
+      error = openError.message;
+    }
   }
 
   function resetSongForm() {
@@ -1051,6 +1062,7 @@
                         href={getScoreDocumentUrl(score.id)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onclick={(event) => openScore(event, score)}
                         class="action-icon action-open"
                         aria-label="PDF öffnen"
                         title="PDF öffnen"

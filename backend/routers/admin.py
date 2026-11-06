@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend import auth, models, schemas
+from backend.paths import data_root
 from backend.sync.outbox import restore_tombstone, soft_delete
 from backend.sync import service as sync_service
 from backend.sync import peer_auth, worker as sync_worker
@@ -40,7 +41,7 @@ async def user_is_editor_or_admin(request: Request, db: Session = Depends(auth.g
 
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(user_is_editor_or_admin)])
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = data_root()
 SCORES_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "scores"
 ORIGINAL_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "upload"
 

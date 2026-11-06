@@ -18,6 +18,7 @@ from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import Session
 
 from backend import models
+from backend.paths import data_root
 from backend.sync.clock import new_uuid7, next_hlc
 from backend.sync.identity import node_id_for_connection
 from backend.sync.outbox import _payload_for, changes_from_peer, including_deleted
@@ -25,6 +26,7 @@ from backend.sync.outbox import _payload_for, changes_from_peer, including_delet
 
 PROTOCOL_VERSION = 1
 SCHEMA_VERSION = 1
+PROJECT_ROOT = data_root()
 DEFAULT_BATCH_SIZE = 250
 MAX_BATCH_SIZE = 1000
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -357,7 +359,7 @@ def record_received_cursor(session: Session, peer_id: str, received_through: int
 
 
 def file_blob_path(sha256: str) -> Path:
-    root = Path(__file__).resolve().parents[1] / "storage" / "blobs"
+    root = PROJECT_ROOT / "backend" / "storage" / "blobs"
     return root / sha256[:2] / f"{sha256}.pdf"
 
 
@@ -461,7 +463,7 @@ def score_blob_hashes(session: Session, strategy: str) -> list[str]:
 
 
 def find_score_blob(session: Session, sha256: str) -> Path | None:
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = PROJECT_ROOT
     scores_root = project_root / "backend" / "storage" / "scores"
     score_paths = session.scalars(
         select(models.Score.storage_path).where(models.Score.file_hash == sha256, models.Score.storage_path.is_not(None))
