@@ -12,12 +12,17 @@ const columns = (editable) => createSongColumns(metadata, [], editable, {});
 test("default and optional columns cover every song field", () => {
   const defs = columns(true);
   assert.deepEqual(defs.filter((column) => !column.initialHide).map((column) => column.colId), [
-    "id", "name", "tune", "composer", "arrangement", "collections", "length", "notes", "my_groups", "actions",
+    "actions", "name", "composer", "arrangement", "collections", "my_groups",
   ]);
   assert.deepEqual(defs.filter((column) => column.initialHide).map((column) => column.colId), [
-    "publisher", "physical_storage_id", "ensemble_id", "kind_of_song_id", "difficulty_level_id",
-    "song_rythm_id", "score_completed", "song_with_solo",
+    "id", "tune", "length", "notes", "publisher", "physical_storage_id", "ensemble_id", "kind_of_song_id",
+    "difficulty_level_id", "song_rythm_id", "score_completed", "song_with_solo",
   ]);
+  assert.equal(defs[0].pinned, "left");
+  assert.equal(defs.find((column) => column.colId === "name").flex, 2);
+  assert.equal(defs.find((column) => column.colId === "composer").flex, 2);
+  assert.equal(defs.find((column) => column.colId === "arrangement").flex, 2);
+  assert.equal(defs.find((column) => column.colId === "actions").flex, 0);
 });
 
 test("only managers can edit fields; derived values and id remain read-only", () => {

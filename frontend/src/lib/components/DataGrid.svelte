@@ -42,7 +42,7 @@
       theme,
       rowData: rows,
       columnDefs: columns,
-      defaultColDef: { sortable: true, filter: "agTextColumnFilter", resizable: true, minWidth: 110 },
+      defaultColDef: { flex: 1, sortable: true, filter: "agTextColumnFilter", resizable: true, minWidth: 75 },
       getRowId,
       readOnlyEdit: true,
       onCellEditRequest: (event) => onEdit(event),

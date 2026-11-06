@@ -6,6 +6,7 @@
     createSong,
     deleteSong,
     getCollections,
+    getGroupInstruments,
     getInstruments,
     getSongMetadata,
     getScores,
@@ -42,6 +43,8 @@
   let editQueue = Promise.resolve();
   let activeSong = null;
   let activeSongScores = [];
+  let groupInstrumentIds = {};
+  let selectedScoreGroupIds = [];
   let scoreInstrumentSelection = {};
   let editingScoreId = null;
   let scoresModal = null;
@@ -151,17 +154,27 @@
       selectedGroupIds = selectedGroupIds.filter((id) => me.groups?.some((group) => group.id === id));
 
       const view = effectiveSongView();
-      const [loadedSongs, loadedInstruments, loadedCollections, loadedSongMetadata] = await Promise.all([
+      const [loadedSongs, loadedInstruments, loadedCollections, loadedSongMetadata, loadedGroupInstruments] = await Promise.all([
         getSongs(view),
         getInstruments(view),
         getCollections(),
         getSongMetadata(),
+        Promise.all((me.groups ?? []).map(async (group) => ({
+          groupId: Number(group.id),
+          instrumentIds: await getGroupInstruments(Number(group.id)),
+        }))),
       ]);
 
       songs = loadedSongs;
       instruments = loadedInstruments;
       collections = normalizeCollections(loadedCollections);
       songMetadata = loadedSongMetadata;
+      groupInstrumentIds = Object.fromEntries(
+        loadedGroupInstruments.map(({ groupId, instrumentIds }) => [
+          groupId,
+          instrumentIds.map((instrument) => Number(instrument.instrument_id)),
+        ])
+      );
     } catch (err) {
       error = err.message;
       goto("/");
@@ -173,6 +186,12 @@
   }
 
   $: filteredSongs = songs.filter((song) => matchesSongFilter(song, songFilter, selectedGroupIds));
+  $: selectedScoreInstrumentIds = new Set(
+    selectedScoreGroupIds.flatMap((groupId) => groupInstrumentIds[groupId] ?? [])
+  );
+  $: filteredActiveSongScores = selectedScoreGroupIds.length
+    ? activeSongScores.filter((score) => selectedScoreInstrumentIds.has(Number(score.instrument_id)))
+    : activeSongScores;
 
   $: songColumns = createSongColumns(songMetadata, collections, canManageSongs(), {
     open: openScoresModal, edit: beginSongEdit, remove: removeSong,
@@ -223,6 +242,7 @@
     try {
       activeSong = song;
       modalTab = "scores";
+      selectedScoreGroupIds = [];
       selectedSongCollectionIds = (song.collections ?? []).map((collection) => collection.id);
       const scores = await getScores(song.id, effectiveSongView());
       const allowedInstrumentIds = new Set(instruments.map((instrument) => Number(instrument.id)));
@@ -245,6 +265,7 @@
     }
     activeSong = null;
     activeSongScores = [];
+    selectedScoreGroupIds = [];
     scoreInstrumentSelection = {};
     editingScoreId = null;
     selectedSongCollectionIds = [];
@@ -741,6 +762,24 @@
     margin: 1rem 0;
   }
 
+  .score-group-filter {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+
+  .score-group-filter__hint {
+    color: var(--color-surface-300);
+    font-size: 0.85rem;
+  }
+
+  .score-group-filter__options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+  }
+
   .tab-active {
     background: var(--color-primary-600);
     color: var(--color-primary-contrast-600);
@@ -926,8 +965,24 @@
     </div>
 
     {#if modalTab === "scores"}
-      {#if activeSongScores.length === 0}
+      {#if (me?.groups ?? []).length > 0}
+        <div class="score-group-filter" aria-label="Stimmen nach Gruppen filtern">
+          <strong>Nach Gruppen filtern</strong>
+          <span class="score-group-filter__hint">Keine Auswahl zeigt alle Stimmen.</span>
+          <div class="score-group-filter__options">
+            {#each me.groups as group (group.id)}
+              <label>
+                <input type="checkbox" bind:group={selectedScoreGroupIds} value={group.id} />
+                {group.name}
+              </label>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      {#if filteredActiveSongScores.length === 0 && activeSongScores.length === 0}
         <p>Keine PDF-Stimmen für dieses Stück verfügbar.</p>
+      {:else if filteredActiveSongScores.length === 0}
+        <p>Keine Stimmen für die ausgewählten Gruppen verfügbar.</p>
       {:else}
         <div class="table-wrap">
           <table>
@@ -939,7 +994,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each activeSongScores as score}
+              {#each filteredActiveSongScores as score}
                 <tr>
                   <td>
                     {#if canEditScoreAssignments() && editingScoreId === score.id}

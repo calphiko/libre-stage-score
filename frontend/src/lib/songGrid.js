@@ -73,16 +73,16 @@ function iconButton(label, paths, callback, warn = false) {
 }
 
 export function createSongColumns(metadata, collections, editable, actions) {
-  const text = (field, headerName, initialHide = false) => ({
-    colId: field, field, headerName, initialHide, editable,
+  const text = (field, headerName, initialHide = false, flex = 1) => ({
+    colId: field, field, headerName, initialHide, editable, flex,
     valueFormatter: ({ value }) => value ?? "-",
   });
   const fields = [
-    { ...text("id", "ID"), editable: false, filter: "agNumberColumnFilter", width: 100 },
-    text("name", "Name"),
-    text("tune", "Tonart"),
-    text("composer", "Komponist"),
-    text("arrangement", "Arrangement"),
+    { ...text("id", "ID", true), editable: false, filter: "agNumberColumnFilter", width: 100 },
+    text("name", "Name", false, 2),
+    text("tune", "Tonart", true),
+    text("composer", "Komponist", false, 2),
+    text("arrangement", "Arrangement", false, 2),
     {
       colId: "collections", field: "collections", headerName: "Sammlungen", editable,
       valueFormatter: ({ value }) => value?.map((item) => item.name).join(", ") || "-",
@@ -90,8 +90,8 @@ export function createSongColumns(metadata, collections, editable, actions) {
       cellEditor: CollectionsEditor,
       cellEditorParams: { collections },
     },
-    text("length", "Länge"),
-    text("notes", "Notizen"),
+    text("length", "Länge", true),
+    text("notes", "Notizen", true),
     {
       colId: "my_groups", field: "my_groups", headerName: "Meine Gruppen",
       valueFormatter: ({ value }) => value?.map((group) => group.name).join(", ") || "-",
@@ -122,7 +122,7 @@ export function createSongColumns(metadata, collections, editable, actions) {
   }
   fields.push({
     colId: "actions", headerName: "Aktion", filter: false, sortable: false, editable: false,
-    width: editable ? 180 : 110, pinned: "right",
+    width: editable ? 180 : 110, minWidth: editable ? 180 : 110, flex: 0, pinned: "left",
     suppressKeyboardEvent: ({ event }) => {
       if (event.target instanceof HTMLButtonElement) return true;
       if (event.key !== "Tab") return false;
@@ -144,5 +144,6 @@ export function createSongColumns(metadata, collections, editable, actions) {
       return wrapper;
     },
   });
+  fields.unshift(fields.pop());
   return fields;
 }
