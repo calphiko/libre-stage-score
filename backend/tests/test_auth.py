@@ -1,10 +1,12 @@
 import base64
 import json
 import struct
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,6 +53,49 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["sync"]["pending_changes"] == 0
+
+
+def test_health_reports_sync_backlog_and_oldest_peer_sync(monkeypatch):
+    peer_id = str(uuid.uuid4())
+    old_success = datetime.now(timezone.utc) - timedelta(minutes=5)
+    monkeypatch.setenv("SYNC_ENABLED", "true")
+    with SessionLocal() as session:
+        session.add(
+            models.SyncPeer(
+                peer_id=peer_id,
+                url="https://peer.example",
+                credentials_reference="SYNC_TEST_PEER_TOKEN",
+            )
+        )
+        session.add(
+            models.SyncCursor(
+                peer_id=peer_id,
+                last_sent=1,
+                last_received=1,
+                last_success_at=old_success,
+            )
+        )
+        for sequence in (1, 2, 3):
+            session.add(
+                models.ChangeLog(
+                    seq=sequence,
+                    table_name="groups",
+                    record_uuid=str(uuid.uuid4()),
+                    operation="insert",
+                    payload={},
+                    hlc=sequence,
+                    node_id=str(uuid.uuid4()),
+                )
+            )
+        session.commit()
+
+    sync = client.get("/health").json()["sync"]
+    assert sync["enabled"] is True
+    assert sync["active_peers"] == 1
+    assert sync["pending_changes"] == 2
+    assert sync["peers_without_success"] == 0
+    assert sync["last_sync_age_seconds"] >= 300
 
 
 def test_extract_song_metadata_from_pdf_falls_back_to_ocr_when_text_is_empty(monkeypatch, tmp_path):
@@ -525,9 +570,11 @@ def test_user_without_group_cannot_access_score_via_direct_instrument_assignment
         db.close()
 
 
-def test_delete_song_removes_score_files_from_storage():
+def test_delete_song_tombstones_scores_and_retains_files():
     db = SessionLocal()
     song_name = "Delete Song Storage Test"
+    storage_dir = None
+    score_path = None
     try:
         song = db.query(models.Song).filter(models.Song.name == song_name).first()
         if song:
@@ -560,9 +607,16 @@ def test_delete_song_removes_score_files_from_storage():
 
         admin.delete_song(song.id, db)
 
-        assert not score_path.exists()
-        assert not storage_dir.exists()
+        assert score_path.exists()
+        assert storage_dir.exists()
         assert db.query(models.Song).filter(models.Song.id == song.id).first() is None
+        session_info = db.info
+        session_info["include_deleted"] = True
+        try:
+            assert db.query(models.Song).filter(models.Song.id == song.id).one().deleted_at is not None
+            assert db.query(models.Score).filter(models.Score.notes == "delete-test").one().deleted_at is not None
+        finally:
+            session_info.pop("include_deleted")
     finally:
         db.query(models.Score).filter(models.Score.notes == "delete-test").delete()
         song = db.query(models.Song).filter(models.Song.name == song_name).first()
@@ -572,6 +626,10 @@ def test_delete_song_removes_score_files_from_storage():
         if instrument:
             db.delete(instrument)
         db.commit()
+        if score_path and score_path.exists():
+            score_path.unlink()
+        if storage_dir and storage_dir.exists():
+            storage_dir.rmdir()
         db.close()
 
 

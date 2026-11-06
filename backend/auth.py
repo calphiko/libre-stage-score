@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -13,7 +14,13 @@ from sqlalchemy.orm import Session
 from backend import database, models
 
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production-please-use-env-secret")
+logger = logging.getLogger(__name__)
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    SECRET_KEY = secrets.token_urlsafe(48)
+    logger.warning("SECRET_KEY is unset; generated an ephemeral key and all user tokens will expire at restart")
+elif len(SECRET_KEY.encode("utf-8")) < 32:
+    raise RuntimeError("SECRET_KEY must contain at least 32 bytes")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 90

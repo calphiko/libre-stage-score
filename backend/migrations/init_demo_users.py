@@ -1,7 +1,9 @@
 import sys
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from pypdf import PdfWriter
 
@@ -11,6 +13,30 @@ from backend import models  # noqa: E402
 from backend.auth import hash_pw  # noqa: E402
 from backend.database import SQLALCHEMY_DATABASE_URL  # noqa: E402
 from backend.routers import admin  # noqa: E402
+from backend.sync import service as sync_service  # noqa: E402
+
+
+def _upgrade_schema() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    alembic_config = Config(str(project_root / "alembic.ini"))
+    alembic_config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
+    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        stamped = False
+        if "alembic_version" in tables:
+            with engine.connect() as conn:
+                stamped = conn.execute(text("SELECT COUNT(*) FROM alembic_version")).scalar() > 0
+        # Schema created via create_all (current models) but never stamped.
+        if not stamped and "users" in tables:
+            columns = {col["name"] for col in inspector.get_columns("users")}
+            if "uuid" in columns:
+                command.stamp(alembic_config, "head")
+                return
+    finally:
+        engine.dispose()
+    command.upgrade(alembic_config, "head")
 
 
 def _create_demo_pdf(target_path: Path) -> str:
@@ -23,6 +49,8 @@ def _create_demo_pdf(target_path: Path) -> str:
 
 
 def run() -> None:
+    _upgrade_schema()
+
     engine = create_engine(
         SQLALCHEMY_DATABASE_URL,
         connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {},
@@ -32,7 +60,18 @@ def run() -> None:
 
     models.Base.metadata.create_all(bind=engine)
 
+    if db.query(models.SyncPeer).count():
+        db.close()
+        engine.dispose()
+        raise RuntimeError("Refusing to reseed demo data while synchronization peers are configured")
+
+    db.query(models.ChangeLog).delete()
+    db.query(models.SyncAudit).delete()
+    db.query(models.SyncConflict).delete()
+    db.query(models.FileBlob).delete()
     db.query(models.SongCollection).delete()
+    db.query(models.DocumentAccess).delete()
+    db.query(models.SongUploads).delete()
     db.query(models.GroupInstrumentMembership).delete()
     db.query(models.UserGroupMembership).delete()
     db.query(models.UserInstrument).delete()
@@ -276,8 +315,12 @@ def run() -> None:
     db.add_all(collections)
     db.flush()
 
-    songs[0].collections.extend([collections[1]])
-    songs[1].collections.extend([collections[2]])
+    db.add_all(
+        [
+            models.SongCollection(song_id=songs[0].id, collection_id=collections[1].id),
+            models.SongCollection(song_id=songs[1].id, collection_id=collections[2].id),
+        ]
+    )
 
     seeded_scores = [
         (songs[0], instrument_lookup["Trompete 1"], "Highland_Cathedral/Trompete_1.pdf", "Lead"),
@@ -285,8 +328,10 @@ def run() -> None:
         (songs[1], instrument_lookup["Flöte 1"], "Amazing_Grace/Floete_1.pdf", "Melodie"),
         (songs[1], instrument_lookup["Euphonium 1"], "Amazing_Grace/Euphonium_1.pdf", "Begleitung"),
     ]
+    registered_blob_hashes: set[str] = set()
     for song, instrument, storage_path, notes in seeded_scores:
-        file_hash = _create_demo_pdf(admin.SCORES_UPLOAD_DIR / storage_path)
+        pdf_path = admin.SCORES_UPLOAD_DIR / storage_path
+        file_hash = _create_demo_pdf(pdf_path)
         db.add(
             models.Score(
                 song_id=song.id,
@@ -296,6 +341,9 @@ def run() -> None:
                 notes=notes,
             )
         )
+        if file_hash not in registered_blob_hashes:
+            sync_service.register_score_blob(pdf_path, file_hash, db)
+            registered_blob_hashes.add(file_hash)
 
     db.commit()
     print("Seeded demo users: admin, alice, bob, carol, dave")

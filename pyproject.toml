@@ -18,23 +18,23 @@ dependencies = [
     "bcrypt>=4.3.0",
     "python-multipart>=0.0.32",
     "pypdf>=6.16.2",
+    "httpx>=0.28.1",
 ]
-
 [project.optional-dependencies]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=8.4.1",
 ]
-
 [dependency-groups]
 dev = [
-    "httpx>=0.28.1",
     "pytest>=8.4.1",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
 pythonpath = ["."]
+markers = [
+    "load: multi-megabyte PDF sync test with bandwidth throttling",
+]
 
 [tool.setuptools.packages.find]
 include = ["backend*"]

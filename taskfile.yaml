@@ -37,6 +37,11 @@ tasks:
       - uv run pytest
     desc: Run backend tests
 
+  test:load:
+    cmds:
+      - uv run pytest -m load
+    desc: Run bandwidth-throttled PDF sync load tests
+
   db:migrate:
     cmds:
       - uv run alembic upgrade head
@@ -65,4 +70,33 @@ tasks:
   db:seed-demo:
     cmds:
       - uv run python backend/migrations/init_demo_users.py
-    desc: Seed demo users
+    desc: Migrate schema and reset the local demo dataset
+
+  node:init:
+    cmds:
+      - uv run python -m backend.operations prepare-database
+      - task db:migrate
+      - uv run python -m backend.operations init-node
+    desc: Initialize the database schema and persistent node identity
+
+  sync-worker:
+    env:
+      SYNC_ENABLED: "true"
+    cmds:
+      - uv run python -m backend.sync.worker
+    desc: Run the synchronization worker without starting the API
+
+  snapshot:export:
+    cmds:
+      - uv run python -m backend.operations export-snapshot --output "{{.OUTPUT}}"
+    desc: Export an online SQLite snapshot and a verified score-blob index
+
+  snapshot:ack-bootstrap:
+    cmds:
+      - uv run python -m backend.operations ack-bootstrap --peer-id "{{.PEER_ID}}" --cursor "{{.CURSOR}}"
+    desc: Advance a new hub peer to the verified snapshot cursor
+
+  node:restore-snapshot:
+    cmds:
+      - uv run python -m backend.operations restore-snapshot --snapshot "{{.SNAPSHOT}}" --hub-url "{{.HUB_URL}}" --hub-credentials-reference "{{.HUB_CREDENTIALS_REFERENCE}}"
+    desc: Bootstrap a new node from a hub snapshot and continue incremental sync

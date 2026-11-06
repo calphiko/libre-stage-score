@@ -1,17 +1,26 @@
+import asyncio
+import logging
 import os
 import secrets
+from collections import deque
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend import auth, models, schemas
 from backend.database import engine
 from backend.routers import admin, password_reset
+from backend.sync.router import router as sync_router
+from backend.sync import worker as sync_worker
+from backend.sync import service as sync_service
 from backend.utils.password_validator import validate_password
 
 
@@ -72,7 +81,94 @@ _ensure_backward_compatible_schema()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCORES_STORAGE_ROOT = PROJECT_ROOT / "backend" / "storage" / "scores"
 
-app = FastAPI(title="libre-stage user service", version="0.1.0")
+logger = logging.getLogger(__name__)
+
+
+class SyncRequestSizeLimitMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+        try:
+            self.max_bytes = int(os.getenv("SYNC_MAX_REQUEST_BYTES", str(17 * 1024 * 1024)))
+        except ValueError as exc:
+            raise RuntimeError("SYNC_MAX_REQUEST_BYTES must be a positive integer") from exc
+        if self.max_bytes <= 0:
+            raise RuntimeError("SYNC_MAX_REQUEST_BYTES must be a positive integer")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope["path"].startswith("/sync/"):
+            await self.app(scope, receive, send)
+            return
+        content_length = next(
+            (value for name, value in scope["headers"] if name == b"content-length"),
+            None,
+        )
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                await self._reject(send, 400, "Invalid Content-Length")
+                return
+            if declared_size < 0:
+                await self._reject(send, 400, "Invalid Content-Length")
+                return
+            if declared_size > self.max_bytes:
+                await self._reject(send, 413, "Sync request exceeds configured size limit")
+                return
+
+        messages: deque[Message] = deque()
+        total_size = 0
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            total_size += len(message.get("body", b""))
+            if total_size > self.max_bytes:
+                await self._reject(send, 413, "Sync request exceeds configured size limit")
+                return
+            messages.append(message)
+            if not message.get("more_body", False):
+                break
+
+        async def replay_body() -> Message:
+            if messages:
+                return messages.popleft()
+            return await receive()
+
+        await self.app(scope, replay_body, send)
+
+    @staticmethod
+    async def _reject(send: Send, status_code: int, detail: str) -> None:
+        body = ('{"detail":"' + detail + '"}').encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status_code,
+                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    worker_task = None
+    if sync_worker.sync_enabled():
+        configuration = sync_worker.load_worker_configuration()
+        worker_task = asyncio.create_task(sync_worker.run_sync_worker(*configuration), name="sync-worker")
+        logger.info("Background synchronization is enabled")
+    try:
+        yield
+    finally:
+        if worker_task is not None:
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+
+
+app = FastAPI(title="libre-stage user service", version="0.1.0", lifespan=lifespan)
+app.add_middleware(SyncRequestSizeLimitMiddleware)
 
 origins_env = os.getenv("CORS_ORIGINS", "http://localhost:5173")
 origins = [origin.strip() for origin in origins_env.split(",") if origin.strip()]
@@ -363,13 +459,31 @@ def get_score_document(score_id: int, current=Depends(auth.get_current_user), db
     score = db.query(models.Score).filter(models.Score.id == score_id).first()
     if not score:
         raise HTTPException(status_code=404, detail="Score not found")
-    if not score.storage_path:
-        raise HTTPException(status_code=404, detail="Score has no storage path")
-
     if not auth.user_can_access_document(db, current, "score", score_id):
         raise HTTPException(status_code=403, detail="You do not have access to this document")
 
-    file_path = _resolve_pdf_path(score.storage_path)
+    file_path = None
+    if score.file_hash:
+        try:
+            digest = sync_service.validate_sha256(score.file_hash)
+        except sync_service.SyncImportError as exc:
+            raise HTTPException(status_code=503, detail="Score file metadata is invalid") from exc
+        file_path = sync_service.local_score_blob(db, digest)
+        if file_path is None and sync_service.pdf_sync_strategy() != "metadata":
+            try:
+                if sync_worker.fetch_blob_from_peers(digest):
+                    file_path = sync_service.local_score_blob(db, digest)
+            except RuntimeError as exc:
+                logger.warning("Could not retrieve score %s from peers: %s", score_id, exc)
+    elif score.storage_path:
+        try:
+            file_path = _resolve_pdf_path(score.storage_path)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+
+    if file_path is None:
+        raise HTTPException(status_code=503, detail="Score PDF is not available on this instance")
     return FileResponse(path=file_path, media_type="application/pdf", filename=file_path.name)
 
 
@@ -381,8 +495,52 @@ def get_version():
 @app.get("/health")
 def health_check(db: Session = Depends(auth.get_db)):
     db.execute(text("SELECT 1"))
-    return {"status": "ok", "database": "connected"}
+    active_peers = db.scalars(
+        select(models.SyncPeer).where(models.SyncPeer.active.is_(True))
+    ).all()
+    cursors = {
+        cursor.peer_id: cursor
+        for cursor in db.scalars(select(models.SyncCursor)).all()
+    }
+    now = datetime.now(timezone.utc)
+    pending_changes = 0
+    last_successful_sync = None
+    peers_without_success = 0
+    for peer in active_peers:
+        cursor = cursors.get(peer.peer_id)
+        pending_changes += db.scalar(
+            select(func.count())
+            .select_from(models.ChangeLog)
+            .where(models.ChangeLog.seq > (cursor.last_sent if cursor else 0))
+        ) or 0
+        last_success = cursor.last_success_at if cursor else None
+        if last_success is None:
+            peers_without_success += 1
+            continue
+        if last_success.tzinfo is None:
+            last_success = last_success.replace(tzinfo=timezone.utc)
+        if last_successful_sync is None or last_success < last_successful_sync:
+            last_successful_sync = last_success
+
+    sync_age_seconds = (
+        max(0, int((now - last_successful_sync).total_seconds()))
+        if last_successful_sync is not None
+        else None
+    )
+    return {
+        "status": "ok",
+        "database": "connected",
+        "sync": {
+            "enabled": sync_worker.sync_enabled(),
+            "active_peers": len(active_peers),
+            "pending_changes": pending_changes,
+            "last_successful_sync": last_successful_sync,
+            "last_sync_age_seconds": sync_age_seconds,
+            "peers_without_success": peers_without_success,
+        },
+    }
 
 
 app.include_router(admin.router)
 app.include_router(password_reset.router)
+app.include_router(sync_router)

@@ -7,16 +7,21 @@ import secrets
 import shutil
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from pydantic import BaseModel, ConfigDict, Field
 from pypdf import PdfReader, PdfWriter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from backend import auth, models, schemas
+from backend.sync.outbox import restore_tombstone, soft_delete
+from backend.sync import service as sync_service
+from backend.sync import peer_auth, worker as sync_worker
 from backend.utils.mailer import send_email
 
 
@@ -38,6 +43,53 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(user_i
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCORES_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "scores"
 ORIGINAL_UPLOAD_DIR = PROJECT_ROOT / "backend" / "storage" / "upload"
+
+
+class SyncPeerCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    peer_id: str = Field(min_length=36, max_length=36)
+    url: str = Field(min_length=1, max_length=2048)
+    credentials_reference: str = Field(min_length=1, max_length=512)
+
+
+class SyncPeerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+    credentials_reference: str | None = Field(default=None, min_length=1, max_length=512)
+    active: bool | None = None
+
+
+class SyncConflictResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resolution: str = Field(min_length=1, max_length=500)
+
+
+def _validate_sync_peer(peer_id: str, url: str, credentials_reference: str) -> str:
+    try:
+        normalized_peer_id = str(uuid.UUID(peer_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Peer-ID muss eine gültige UUID sein") from exc
+    if not sync_worker.peer_url_is_allowed(url):
+        raise HTTPException(
+            status_code=422,
+            detail="Peer-URL muss HTTPS verwenden; HTTP ist nur für Loopback-Adressen erlaubt",
+        )
+    try:
+        peer_auth.validation_keys(credentials_reference)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return normalized_peer_id
+
+
+def _isoformat_utc(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
 
 
 def _score_to_out(score: models.Score, song: models.Song, instrument: models.Instrument) -> schemas.ScoreOut:
@@ -900,6 +952,7 @@ def _create_scores_from_chapters(
             file_hash=_hash_file(part_path),
             notes=notes,
         )
+        sync_service.register_score_blob(part_path, score.file_hash, db)
         db.add(score)
         db.flush()
         created_scores.append((score, instrument))
@@ -1140,7 +1193,7 @@ def delete_group(group_id: int, db: Session = Depends(auth.get_db)):
     db_group = db.query(models.Group).filter(models.Group.id == group_id).first()
     if not db_group:
         raise HTTPException(status_code=404, detail="Group not found")
-    db.delete(db_group)
+    soft_delete(db, db_group)
     db.commit()
     return {"message": "Group deleted"}
 
@@ -1177,9 +1230,16 @@ def update_user_groups(user_id: int, payload: schemas.UserGroupMembershipUpdate,
         groups = db.query(models.Group).filter(models.Group.id.in_(payload.group_ids)).all()
         if len(groups) != len(set(payload.group_ids)):
             raise HTTPException(status_code=404, detail="One or more groups not found")
-    db.query(models.UserGroupMembership).filter(models.UserGroupMembership.user_id == user_id).delete()
-    for group in groups if payload.group_ids else []:
-        db.add(models.UserGroupMembership(user_id=user_id, group_id=group.id))
+    memberships = db.query(models.UserGroupMembership).filter_by(user_id=user_id).all()
+    desired_group_ids = {group.id for group in groups} if payload.group_ids else set()
+    for membership in memberships:
+        if membership.group_id not in desired_group_ids:
+            soft_delete(db, membership)
+    active_group_ids = {membership.group_id for membership in memberships}
+    for group_id in desired_group_ids - active_group_ids:
+        if restore_tombstone(db, models.UserGroupMembership, user_id=user_id, group_id=group_id):
+            continue
+        db.add(models.UserGroupMembership(user_id=user_id, group_id=group_id))
     db.commit()
     return {"message": "User groups updated"}
 
@@ -1229,15 +1289,22 @@ def update_group_instruments(
         if len(instruments) != len(set(instrument_ids)):
             raise HTTPException(status_code=404, detail="One or more instruments not found")
 
-    db.query(models.GroupInstrumentMembership).filter(models.GroupInstrumentMembership.group_id == group_id).delete()
+    assignments = db.query(models.GroupInstrumentMembership).filter_by(group_id=group_id).all()
+    desired_instrument_ids = set(instrument_ids)
+    for assignment in assignments:
+        if assignment.instrument_id not in desired_instrument_ids:
+            soft_delete(db, assignment)
+    active_instrument_ids = {assignment.instrument_id for assignment in assignments}
     for instrument_id in instrument_ids:
-        db.add(
-            models.GroupInstrumentMembership(
-                group_id=group_id,
-                instrument_id=instrument_id,
-                notes=payload.notes,
-            )
+        if instrument_id in active_instrument_ids:
+            continue
+        restored = restore_tombstone(
+            db, models.GroupInstrumentMembership, group_id=group_id, instrument_id=instrument_id
         )
+        if restored:
+            restored.notes = payload.notes
+            continue
+        db.add(models.GroupInstrumentMembership(group_id=group_id, instrument_id=instrument_id, notes=payload.notes))
     db.commit()
     return get_group_instruments(group_id, db)
 
@@ -1432,7 +1499,7 @@ def delete_instrument(instrument_id: int, db: Session = Depends(auth.get_db)):
     if is_used_in_scores or is_used_in_user_assignments or is_used_in_group_assignments:
         raise HTTPException(status_code=400, detail="Instrument is still assigned and cannot be deleted")
 
-    db.delete(db_instrument)
+    soft_delete(db, db_instrument)
     db.commit()
     return {"message": "Instrument deleted"}
 
@@ -1511,7 +1578,7 @@ def remove_instrument_from_user(user_id: int, instrument_id: int, db: Session = 
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    db.delete(assignment)
+    soft_delete(db, assignment)
     db.commit()
     return {"message": "Instrument assignment removed"}
 
@@ -1570,7 +1637,7 @@ def delete_collection(collection_id: int, db: Session = Depends(auth.get_db)):
     db_collection = db.query(models.Collection).filter(models.Collection.id == collection_id).first()
     if not db_collection:
         raise HTTPException(status_code=404, detail="Collection not found")
-    db.delete(db_collection)
+    soft_delete(db, db_collection)
     db.commit()
     return {"message": "Collection deleted"}
 
@@ -1654,7 +1721,16 @@ def update_song_collections(
         )
         if len(collections) != len(set(payload.collection_ids)):
             raise HTTPException(status_code=404, detail="One or more collections not found")
-    db_song.collections = collections
+    assignments = db.query(models.SongCollection).filter_by(song_id=song_id).all()
+    desired_collection_ids = {collection.id for collection in collections}
+    for assignment in assignments:
+        if assignment.collection_id not in desired_collection_ids:
+            soft_delete(db, assignment)
+    active_collection_ids = {assignment.collection_id for assignment in assignments}
+    for collection_id in desired_collection_ids - active_collection_ids:
+        if restore_tombstone(db, models.SongCollection, song_id=song_id, collection_id=collection_id):
+            continue
+        db.add(models.SongCollection(song_id=song_id, collection_id=collection_id))
     db.commit()
     db.refresh(db_song)
     return db_song
@@ -1666,30 +1742,7 @@ def delete_song(song_id: int, db: Session = Depends(auth.get_db)):
     if not db_song:
         raise HTTPException(status_code=404, detail="Song not found")
 
-    song_scores = db.query(models.Score).filter(models.Score.song_id == song_id).all()
-    song_folder = _build_song_storage_folder_name(db_song, db)
-    song_storage_dir = SCORES_UPLOAD_DIR / song_folder
-
-    for score in song_scores:
-        if not score.storage_path:
-            continue
-        file_path = _absolute_score_storage_path(score.storage_path)
-        if file_path.exists():
-            file_path.unlink()
-
-    if song_storage_dir.exists() and song_storage_dir.is_dir():
-        for child in list(song_storage_dir.iterdir()):
-            if child.is_file():
-                child.unlink()
-            elif child.is_dir():
-                shutil.rmtree(child, ignore_errors=True)
-        try:
-            song_storage_dir.rmdir()
-        except OSError:
-            pass
-
-    db.query(models.Score).filter(models.Score.song_id == song_id).delete()
-    db.delete(db_song)
+    soft_delete(db, db_song)
     db.commit()
     return {"message": "Song deleted"}
 
@@ -1726,6 +1779,208 @@ def rescrape_storage(db: Session = Depends(auth.get_db)):
         removed_scores=0,
     )
     return empty_status
+
+
+@router.get("/sync/status", dependencies=[Depends(user_is_admin)])
+def get_sync_admin_status(db: Session = Depends(auth.get_db)):
+    peers = db.scalars(select(models.SyncPeer).order_by(models.SyncPeer.peer_id)).all()
+    cursors = {
+        cursor.peer_id: cursor
+        for cursor in db.scalars(select(models.SyncCursor)).all()
+    }
+    interval = sync_worker.sync_interval_seconds()
+    selected_peer_ids = sync_worker.configured_peer_ids()
+    stale_after = max(interval * 3, 60)
+    now = datetime.now(timezone.utc)
+    peer_status = []
+    active_last_sent = []
+    for peer in peers:
+        cursor = cursors.get(peer.peer_id)
+        last_success = cursor.last_success_at if cursor else None
+        last_success_utc = last_success
+        if last_success_utc is not None and last_success_utc.tzinfo is None:
+            last_success_utc = last_success_utc.replace(tzinfo=timezone.utc)
+        worker_configured = selected_peer_ids is None or peer.peer_id in selected_peer_ids
+        if not peer.active:
+            reachability = "paused"
+        elif not worker_configured:
+            reachability = "not_configured"
+        elif last_success_utc is None:
+            reachability = "unknown"
+        elif (now - last_success_utc).total_seconds() <= stale_after:
+            reachability = "reachable"
+        else:
+            reachability = "unreachable"
+        if peer.active and worker_configured:
+            active_last_sent.append(cursor.last_sent if cursor else 0)
+        peer_status.append({
+            "peer_id": peer.peer_id,
+            "url": peer.url,
+            "credentials_reference": peer.credentials_reference,
+            "active": peer.active,
+            "worker_configured": worker_configured,
+            "reachability": reachability,
+            "last_successful_sync": _isoformat_utc(last_success),
+            "last_sent": cursor.last_sent if cursor else 0,
+            "last_received": cursor.last_received if cursor else 0,
+        })
+
+    latest_sequence = db.scalar(select(models.ChangeLog.seq).order_by(models.ChangeLog.seq.desc()).limit(1)) or 0
+    pending_changes = 0
+    if active_last_sent:
+        pending_changes = db.scalar(
+            select(func.count())
+            .select_from(models.ChangeLog)
+            .where(models.ChangeLog.seq > min(active_last_sent))
+        ) or 0
+    else:
+        pending_changes = db.scalar(
+            select(func.count()).select_from(models.ChangeLog)
+        ) or 0
+    open_conflict_count = db.scalar(
+        select(func.count())
+        .select_from(models.SyncConflict)
+        .where(models.SyncConflict.status == "open")
+    ) or 0
+    return {
+        "enabled": sync_worker.sync_enabled(),
+        "pending_changes": pending_changes,
+        "open_conflicts": open_conflict_count,
+        "latest_change": latest_sequence,
+        "peers": peer_status,
+    }
+
+
+@router.post("/sync/peers", status_code=201, dependencies=[Depends(user_is_admin)])
+def create_sync_peer(payload: SyncPeerCreate, db: Session = Depends(auth.get_db)):
+    peer_id = _validate_sync_peer(payload.peer_id, payload.url, payload.credentials_reference)
+    try:
+        local_node_id = sync_service.get_local_node_id(db)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="Lokale Node-Identität ist nicht konfiguriert") from exc
+    if peer_id == local_node_id:
+        raise HTTPException(status_code=422, detail="Die lokale Node kann nicht als Peer hinzugefügt werden")
+    if db.get(models.SyncPeer, peer_id) is not None:
+        raise HTTPException(status_code=409, detail="Peer ist bereits vorhanden")
+    peer = models.SyncPeer(
+        peer_id=peer_id,
+        url=payload.url,
+        credentials_reference=payload.credentials_reference,
+        active=True,
+    )
+    db.add(peer)
+    db.commit()
+    return {
+        "peer_id": peer.peer_id,
+        "url": peer.url,
+        "credentials_reference": peer.credentials_reference,
+        "active": peer.active,
+    }
+
+
+@router.put("/sync/peers/{peer_id}", dependencies=[Depends(user_is_admin)])
+def update_sync_peer(peer_id: str, payload: SyncPeerUpdate, db: Session = Depends(auth.get_db)):
+    peer = db.get(models.SyncPeer, peer_id)
+    if peer is None:
+        raise HTTPException(status_code=404, detail="Peer nicht gefunden")
+    changes = payload.model_dump(exclude_unset=True)
+    if any(value is None for value in changes.values()):
+        raise HTTPException(status_code=422, detail="Peer-Felder dürfen nicht auf null gesetzt werden")
+    url = changes.get("url", peer.url)
+    credentials_reference = changes.get("credentials_reference", peer.credentials_reference)
+    if "url" in changes or "credentials_reference" in changes or changes.get("active") is True:
+        if url is None or credentials_reference is None:
+            raise HTTPException(status_code=422, detail="Aktive Peers benötigen URL und Schlüsselverweis")
+        _validate_sync_peer(peer.peer_id, url, credentials_reference)
+    for field, value in changes.items():
+        setattr(peer, field, value)
+    db.commit()
+    return {
+        "peer_id": peer.peer_id,
+        "url": peer.url,
+        "credentials_reference": peer.credentials_reference,
+        "active": peer.active,
+    }
+
+
+@router.delete("/sync/peers/{peer_id}", dependencies=[Depends(user_is_admin)])
+def delete_sync_peer(peer_id: str, db: Session = Depends(auth.get_db)):
+    peer = db.get(models.SyncPeer, peer_id)
+    if peer is None:
+        raise HTTPException(status_code=404, detail="Peer nicht gefunden")
+    db.delete(peer)
+    db.commit()
+    return {"peer_id": peer_id, "deleted": True}
+
+
+@router.get("/sync/conflicts", dependencies=[Depends(user_is_admin)])
+def get_sync_conflicts(db: Session = Depends(auth.get_db)):
+    conflicts = db.scalars(
+        select(models.SyncConflict)
+        .where(models.SyncConflict.status == "open")
+        .order_by(models.SyncConflict.detected_at.desc())
+        .limit(500)
+    ).all()
+    return [
+        {
+            "conflict_id": conflict.conflict_id,
+            "table_name": conflict.table_name,
+            "record_uuid": conflict.record_uuid,
+            "remote_node_id": conflict.remote_node_id,
+            "reason": conflict.reason,
+            "detected_at": _isoformat_utc(conflict.detected_at),
+        }
+        for conflict in conflicts
+    ]
+
+
+@router.post("/sync/conflicts/{conflict_id}/resolve", dependencies=[Depends(user_is_admin)])
+def resolve_sync_conflict(
+    conflict_id: str,
+    payload: SyncConflictResolution,
+    db: Session = Depends(auth.get_db),
+):
+    conflict = db.get(models.SyncConflict, conflict_id)
+    if conflict is None:
+        raise HTTPException(status_code=404, detail="Konflikt nicht gefunden")
+    if conflict.status == "open":
+        conflict.status = "resolved"
+        conflict.resolution = payload.resolution
+        conflict.resolved_at = datetime.now(timezone.utc)
+        db.commit()
+    return {"conflict_id": conflict_id, "status": conflict.status}
+
+
+@router.get("/sync/blobs", dependencies=[Depends(user_is_admin)])
+def get_sync_blob_status(db: Session = Depends(auth.get_db)):
+    scores = db.scalars(
+        select(models.Score).where(
+            models.Score.deleted_at.is_(None),
+            models.Score.file_hash.is_not(None),
+        )
+    ).all()
+    missing = {}
+    available_hashes = {}
+    for score in scores:
+        digest = score.file_hash
+        if digest is None:
+            continue
+        if digest not in available_hashes:
+            canonical_path = sync_service.file_blob_path(digest)
+            available_hashes[digest] = (
+                canonical_path.is_file()
+                or sync_service.find_score_blob(db, digest) is not None
+            )
+        if available_hashes[digest]:
+            continue
+        blob = db.get(models.FileBlob, digest)
+        missing.setdefault(digest, {
+            "sha256": digest,
+            "status": blob.status if blob else "missing",
+            "size_bytes": blob.size_bytes if blob else None,
+            "score_ids": [],
+        })["score_ids"].append(score.id)
+    return list(missing.values())
 
 
 @router.get("/scores", response_model=list[schemas.ScoreOut])
@@ -2136,6 +2391,7 @@ def upload_score_pdf(
                 file_hash=_hash_file(part_path),
                 notes=notes,
             )
+            sync_service.register_score_blob(part_path, score.file_hash, db)
             db.add(score)
             db.flush()
             created_scores.append((score, instrument))
@@ -2160,6 +2416,7 @@ def upload_score_pdf(
             file_hash=_hash_file(target_path),
             notes=notes,
         )
+        sync_service.register_score_blob(target_path, score.file_hash, db)
         db.add(score)
         db.flush()
         created_scores.append((score, fallback_instrument))
@@ -2200,14 +2457,19 @@ def update_score(score_id: int, score: schemas.ScoreUpdate, db: Session = Depend
             shutil.move(str(source_path), str(target_path))
             db_score.storage_path = new_storage_path
             db_score.file_hash = _hash_file(target_path)
+            sync_service.register_score_blob(target_path, db_score.file_hash, db)
         elif db_score.storage_path:
             file_path = _absolute_score_storage_path(db_score.storage_path)
             db_score.file_hash = _hash_file(file_path) if file_path.exists() else None
+            if file_path.is_file():
+                sync_service.register_score_blob(file_path, db_score.file_hash, db)
         else:
             db_score.file_hash = None
     elif db_score.storage_path:
         file_path = _absolute_score_storage_path(db_score.storage_path)
         db_score.file_hash = _hash_file(file_path) if file_path.exists() else None
+        if file_path.is_file():
+            sync_service.register_score_blob(file_path, db_score.file_hash, db)
     db.commit()
     db.refresh(db_score)
     return _score_to_out(db_score, song, instrument)
@@ -2219,11 +2481,7 @@ def delete_score(score_id: int, db: Session = Depends(auth.get_db)):
     if not db_score:
         raise HTTPException(status_code=404, detail="Score not found")
 
-    if db_score.storage_path:
-        file_path = _absolute_score_storage_path(db_score.storage_path)
-        if file_path.exists():
-            file_path.unlink()
-    db.delete(db_score)
+    soft_delete(db, db_score)
     db.commit()
     return {"message": "Score deleted"}
 

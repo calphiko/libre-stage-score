@@ -232,7 +232,7 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    background: #f8fafc;
+    background: var(--color-surface-900);
     white-space: nowrap;
   }
 
@@ -254,7 +254,7 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.5);
+    background: oklch(0 0 0 / 0.72);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -264,9 +264,10 @@
 
   .modal {
     width: min(520px, 100%);
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-container);
+    box-shadow: 0 24px 70px oklch(0 0 0 / 0.4);
     padding: 1.25rem;
     display: flex;
     flex-direction: column;
@@ -288,7 +289,7 @@
 
   .modal label span {
     font-size: 0.85rem;
-    color: #334155;
+    color: var(--color-surface-200);
   }
 
   .modal input {

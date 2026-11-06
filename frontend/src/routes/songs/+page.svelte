@@ -636,10 +636,10 @@
     width: 260px;
     max-width: 30vw;
     padding: 0;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 4px;
     overflow: hidden;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     cursor: zoom-in;
   }
 
@@ -659,7 +659,7 @@
   }
 
   .chapter-preview-dialog::backdrop {
-    background: rgba(15, 23, 42, 0.75);
+    background: oklch(0 0 0 / 0.82);
   }
 
   .chapter-preview-dialog__content {
@@ -672,7 +672,8 @@
     padding: 0.75rem;
     overflow: auto;
     border-radius: 8px;
-    background: white;
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
   }
 
   .chapter-preview-dialog__content img {
@@ -687,7 +688,7 @@
   .mapping-hint {
     display: block;
     margin-top: 0.35rem;
-    color: var(--color-surface-600);
+    color: var(--color-surface-300);
     font-size: 0.85rem;
     line-height: 1.4;
   }
@@ -704,16 +705,16 @@
   }
 
   .drop-zone {
-    border: 2px dashed var(--color-surface-300);
+    border: 2px dashed var(--color-surface-700);
     border-radius: var(--radius-base, 0.375rem);
     padding: 1rem;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     transition: border-color 0.15s ease-in-out, background 0.15s ease-in-out;
   }
 
   .drop-zone.active {
     border-color: var(--color-primary-400);
-    background: var(--color-primary-50);
+    background: color-mix(in oklab, var(--color-primary-500) 14%, var(--color-surface-900));
   }
 
   .collection-chip {
@@ -721,14 +722,14 @@
     padding: 0.15rem 0.45rem;
     margin: 0 0.35rem 0.35rem 0;
     border-radius: 999px;
-    background: var(--color-primary-50);
-    color: var(--color-primary-700);
+    background: color-mix(in oklab, var(--color-primary-500) 18%, var(--color-surface-900));
+    color: var(--color-primary-200);
     font-size: 0.85rem;
   }
 
   .storage-warning {
-    border: 2px solid var(--color-warning-500);
-    background: var(--color-warning-50);
+    border: 1px solid color-mix(in oklab, var(--color-warning-500) 65%, transparent);
+    background: color-mix(in oklab, var(--color-warning-500) 12%, var(--color-surface-900));
   }
 
   .action-icon {
@@ -746,15 +747,15 @@
   }
 
   .action-open {
-    background: var(--color-primary-100);
-    color: var(--color-primary-700);
-    border-color: var(--color-primary-300);
+    background: color-mix(in oklab, var(--color-primary-500) 18%, var(--color-surface-900));
+    color: var(--color-primary-200);
+    border-color: color-mix(in oklab, var(--color-primary-400) 50%, transparent);
   }
 
   .action-delete {
-    background: var(--color-error-100);
-    color: var(--color-error-700);
-    border-color: var(--color-error-300);
+    background: color-mix(in oklab, var(--color-error-500) 16%, var(--color-surface-900));
+    color: var(--color-error-200);
+    border-color: color-mix(in oklab, var(--color-error-400) 50%, transparent);
   }
 
   .inline-toggle {
@@ -767,14 +768,14 @@
 
   .inline-toggle--filter {
     padding: 0.25rem 0.55rem;
-    border: 1px solid var(--color-border, rgba(15, 23, 42, 0.15));
+    border: 1px solid var(--color-surface-700);
     border-radius: 999px;
-    background: var(--color-neutral-50, rgba(148, 163, 184, 0.08));
-    color: var(--color-text, inherit);
+    background: var(--color-surface-900);
+    color: var(--color-surface-200);
   }
 
   .inline-toggle--filter input {
-    accent-color: var(--color-primary-600, #2563eb);
+    accent-color: var(--color-primary-400);
   }
 </style>
 

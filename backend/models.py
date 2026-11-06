@@ -1,13 +1,37 @@
 from datetime import datetime, time, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    Time,
+    UniqueConstraint,
+    and_,
+)
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
+
+from backend.sync.clock import new_uuid7, next_hlc
+from backend.sync.identity import current_node_id
 
 
 Base = declarative_base()
 
 
-class Group(Base):
+class ReplicatedMixin:
+    uuid: Mapped[str] = mapped_column(String(36), default=new_uuid7, unique=True, index=True, nullable=False)
+    updated_at: Mapped[int] = mapped_column(BigInteger, default=next_hlc, nullable=False)
+    updated_by_node: Mapped[str] = mapped_column(String(36), default=current_node_id, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    deleted_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class Group(ReplicatedMixin, Base):
     __tablename__ = "groups"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -39,7 +63,7 @@ class Group(Base):
         return [membership.instrument for membership in self.instrument_memberships if membership.instrument is not None]
 
 
-class User(Base):
+class User(ReplicatedMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -75,7 +99,7 @@ class User(Base):
     )
 
 
-class UserGroupMembership(Base):
+class UserGroupMembership(ReplicatedMixin, Base):
     __tablename__ = "user_groups"
     __table_args__ = (UniqueConstraint("user_id", "group_id", name="uq_user_group"),)
 
@@ -87,7 +111,7 @@ class UserGroupMembership(Base):
     group: Mapped["Group"] = relationship("Group", back_populates="user_memberships")
 
 
-class DocumentAccess(Base):
+class DocumentAccess(ReplicatedMixin, Base):
     __tablename__ = "document_access"
     __table_args__ = (
         UniqueConstraint("document_type", "document_id", "user_id", "group_id", name="uq_document_access"),
@@ -133,7 +157,7 @@ class TokenBlacklist(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
-class Instrument(Base):
+class Instrument(ReplicatedMixin, Base):
     __tablename__ = "instruments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -153,7 +177,7 @@ class Instrument(Base):
     )
 
 
-class SongCollection(Base):
+class SongCollection(ReplicatedMixin, Base):
     __tablename__ = "song_collections"
 
     song_id: Mapped[int] = mapped_column(Integer, ForeignKey("songs.id", ondelete="CASCADE"), primary_key=True)
@@ -162,7 +186,7 @@ class SongCollection(Base):
     )
 
 
-class Collection(Base):
+class Collection(ReplicatedMixin, Base):
     __tablename__ = "collections"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -172,40 +196,42 @@ class Collection(Base):
     songs: Mapped[list["Song"]] = relationship(
         "Song",
         secondary="song_collections",
+        primaryjoin="Collection.id == SongCollection.collection_id",
+        secondaryjoin=lambda: and_(Song.id == SongCollection.song_id, SongCollection.deleted_at.is_(None)),
         back_populates="collections",
     )
 
-class Ensemble(Base):
+class Ensemble(ReplicatedMixin, Base):
     __tablename__ = "ensembles"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class SongStoragePhysical(Base):
+class SongStoragePhysical(ReplicatedMixin, Base):
     __tablename__ = "song_storage_physical"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     storage_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class KindOfSong(Base):
+class KindOfSong(ReplicatedMixin, Base):
     __tablename__ = "kind_of_song"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class DifficultyLevel(Base):
+class DifficultyLevel(ReplicatedMixin, Base):
     __tablename__ = "difficulty_level"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class SongRythm(Base):
+class SongRythm(ReplicatedMixin, Base):
     __tablename__ = "song_rythm"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class SongUploads(Base):
+class SongUploads(ReplicatedMixin, Base):
     __tablename__ = "song_uploads"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     song_id: Mapped[int] = mapped_column(Integer, ForeignKey("songs.id", ondelete="CASCADE"), nullable=False)
@@ -214,7 +240,7 @@ class SongUploads(Base):
     uploaded_by_user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-class Song(Base):
+class Song(ReplicatedMixin, Base):
     __tablename__ = "songs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -235,11 +261,13 @@ class Song(Base):
     collections: Mapped[list["Collection"]] = relationship(
         "Collection",
         secondary="song_collections",
+        primaryjoin="Song.id == SongCollection.song_id",
+        secondaryjoin=lambda: and_(Collection.id == SongCollection.collection_id, SongCollection.deleted_at.is_(None)),
         back_populates="songs",
     )
 
 
-class Score(Base):
+class Score(ReplicatedMixin, Base):
     __tablename__ = "scores"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
@@ -250,7 +278,7 @@ class Score(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class UserInstrument(Base):
+class UserInstrument(ReplicatedMixin, Base):
     __tablename__ = "user_instruments"
     __table_args__ = (UniqueConstraint("user_id", "instrument_id", name="uq_user_instrument"),)
 
@@ -263,7 +291,7 @@ class UserInstrument(Base):
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="user_instruments")
 
 
-class GroupInstrumentMembership(Base):
+class GroupInstrumentMembership(ReplicatedMixin, Base):
     __tablename__ = "group_instruments"
     __table_args__ = (UniqueConstraint("group_id", "instrument_id", name="uq_group_instrument"),)
 
@@ -274,3 +302,92 @@ class GroupInstrumentMembership(Base):
 
     group: Mapped["Group"] = relationship("Group", back_populates="instrument_memberships")
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="group_memberships")
+
+
+class NodeIdentity(Base):
+    __tablename__ = "node_identity"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String(36), default=new_uuid7, unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, default="local-node")
+    key_reference: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+
+class SyncPeer(Base):
+    __tablename__ = "sync_peers"
+
+    peer_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    credentials_reference: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class SyncCursor(Base):
+    __tablename__ = "sync_cursors"
+
+    peer_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sync_peers.peer_id", ondelete="CASCADE"), primary_key=True
+    )
+    last_sent: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    last_received: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChangeLog(Base):
+    __tablename__ = "change_log"
+
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    record_uuid: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    hlc: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    node_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class SyncConflict(Base):
+    __tablename__ = "sync_conflicts"
+
+    conflict_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_uuid7)
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    record_uuid: Mapped[str] = mapped_column(String(36), nullable=False)
+    local_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    remote_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    remote_node_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
+    resolution: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SyncAudit(Base):
+    __tablename__ = "sync_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    remote_node_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    change_seq: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    record_uuid: Mapped[str] = mapped_column(String(36), nullable=False)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    hlc: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+
+
+class FileBlob(Base):
+    __tablename__ = "file_blobs"
+    __table_args__ = (
+        CheckConstraint("status IN ('missing', 'present', 'transferring')", name="ck_file_blobs_status"),
+    )
+
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="missing", nullable=False)
+    updated_at: Mapped[int] = mapped_column(BigInteger, default=next_hlc, nullable=False)

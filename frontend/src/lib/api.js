@@ -1,6 +1,22 @@
-export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+export const API_URL = (import.meta.env.VITE_API_URL ?? "").replace(/\/+$/, "");
 
 let csrfTokenCache = null;
+
+function apiUrl(path) {
+  return `${API_URL}${path}`;
+}
+
+async function fetchApi(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      const instance = API_URL || (typeof window !== "undefined" ? window.location.origin : "der aktuellen Adresse");
+      throw new Error(`Die Instanz unter ${instance} ist nicht erreichbar. Prüfe Netzwerk und API-Konfiguration.`);
+    }
+    throw error;
+  }
+}
 
 function notifyAuthChanged() {
   if (typeof window === "undefined") return;
@@ -32,7 +48,7 @@ function currentCsrfToken() {
 async function ensureCsrfToken() {
   const current = currentCsrfToken();
   if (current) return current;
-  const res = await fetch(`${API_URL}/csrf`, { credentials: "include" });
+  const res = await fetchApi(apiUrl("/csrf"), { credentials: "include" });
   if (!res.ok) return null;
   const data = await res.json().catch(() => ({}));
   rememberCsrfToken(data.csrf_token);
@@ -51,9 +67,9 @@ async function fetchWithAuth(url, options = {}) {
     if (token) requestOptions.headers["X-CSRF-Token"] = token;
   }
 
-  let res = await fetch(url, requestOptions);
+  let res = await fetchApi(url, requestOptions);
   if (res.status === 401) {
-    const refresh = await fetch(`${API_URL}/refresh`, {
+    const refresh = await fetchApi(apiUrl("/refresh"), {
       method: "POST",
       credentials: "include",
     });
@@ -64,7 +80,7 @@ async function fetchWithAuth(url, options = {}) {
         const token = currentCsrfToken();
         if (token) requestOptions.headers["X-CSRF-Token"] = token;
       }
-      res = await fetch(url, requestOptions);
+      res = await fetchApi(url, requestOptions);
     }
   }
 
@@ -80,7 +96,7 @@ async function fetchWithAuth(url, options = {}) {
 }
 
 export async function login(username, password) {
-  const res = await fetch(`${API_URL}/login`, {
+  const res = await fetchApi(apiUrl("/login"), {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -100,11 +116,15 @@ export async function logout() {
   const headers = { "Content-Type": "application/json" };
   const token = await ensureCsrfToken();
   if (token) headers["X-CSRF-Token"] = token;
-  await fetch(`${API_URL}/logout`, {
+  const res = await fetchApi(apiUrl("/logout"), {
     method: "POST",
     credentials: "include",
     headers,
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail ?? "Logout fehlgeschlagen");
+  }
   notifyAuthChanged();
 }
 
@@ -479,6 +499,53 @@ export async function getStorageStatus() {
   return res.json();
 }
 
+export async function getSyncStatus() {
+  const res = await fetchWithAuth(apiUrl("/admin/sync/status"), { method: "GET" });
+  return res.json();
+}
+
+export async function getSyncConflicts() {
+  const res = await fetchWithAuth(apiUrl("/admin/sync/conflicts"), { method: "GET" });
+  return res.json();
+}
+
+export async function resolveSyncConflict(conflictId, resolution = "Manuell geprüft") {
+  const res = await fetchWithAuth(apiUrl(`/admin/sync/conflicts/${conflictId}/resolve`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ resolution }),
+  });
+  return res.json();
+}
+
+export async function createSyncPeer(data) {
+  const res = await fetchWithAuth(apiUrl("/admin/sync/peers"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updateSyncPeer(peerId, data) {
+  const res = await fetchWithAuth(apiUrl(`/admin/sync/peers/${peerId}`), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteSyncPeer(peerId) {
+  const res = await fetchWithAuth(apiUrl(`/admin/sync/peers/${peerId}`), { method: "DELETE" });
+  return res.json();
+}
+
+export async function getSyncBlobStatus() {
+  const res = await fetchWithAuth(apiUrl("/admin/sync/blobs"), { method: "GET" });
+  return res.json();
+}
+
 export async function rescrapeStorage() {
   const res = await fetchWithAuth(`${API_URL}/admin/storage/rescrape`, {
     method: "POST",
@@ -488,11 +555,11 @@ export async function rescrapeStorage() {
 }
 
 export function getScoreDocumentUrl(scoreId) {
-  return `${API_URL}/scores/${scoreId}/document`;
+  return apiUrl(`/scores/${scoreId}/document`);
 }
 
 export async function verifyPwResetToken(resetToken) {
-  const res = await fetch(`${API_URL}/password_reset/verify_reset_token`, {
+  const res = await fetchApi(apiUrl("/password_reset/verify_reset_token"), {
     method: "GET",
     headers: {
       "Content-Type": "application/json",
@@ -504,7 +571,7 @@ export async function verifyPwResetToken(resetToken) {
 }
 
 export async function resetPassword(resetToken, newPassword) {
-  const res = await fetch(`${API_URL}/password_reset/new_password`, {
+  const res = await fetchApi(apiUrl("/password_reset/new_password"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

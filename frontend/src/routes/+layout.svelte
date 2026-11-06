@@ -4,8 +4,8 @@
   import { onMount } from "svelte";
   import NewSongFromPdfModal from "$lib/components/NewSongFromPdfModal.svelte";
   import { getUser, logout } from "$lib/api.js";
-  import { toasts } from "$lib/toasts.js";
-  import { applyTheme, getStoredTheme } from "$lib/theme";
+  import { showToast, toasts } from "$lib/toasts.js";
+  import { applyTheme, getDefaultTheme } from "$lib/theme";
 
   let user = null;
   let isMenuOpen = false;
@@ -23,15 +23,19 @@
   }
 
   async function doLogout() {
-    await logout();
-    user = null;
-    closeMenu();
-    goto("/");
+    try {
+      await logout();
+      user = null;
+      closeMenu();
+      goto("/");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
   }
 
   onMount(() => {
     refreshUser();
-    applyTheme(getStoredTheme());
+    applyTheme(getDefaultTheme());
     const onAuthChanged = () => {
       closeMenu();
       refreshUser();
@@ -67,6 +71,7 @@
         <span class="app-header__meta">Eingeloggt als: {user.user_name} ({user.user_group})</span>
         {#if user.user_group === "admin"}
           <a href="/users" onclick={closeMenu}>Benutzerverwaltung</a>
+          <a href="/sync" onclick={closeMenu}>Synchronisation</a>
         {/if}
         <a href="/songs" onclick={closeMenu}>Stücke & Stimmen</a>
         {#if user.user_group === "admin" || user.user_group === "editor"}
@@ -159,21 +164,21 @@
     padding: 0.45rem 0.6rem;
     border-radius: 0.5rem;
     border: 1px solid;
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+    box-shadow: 0 10px 28px oklch(0 0 0 / 0.28);
     font-size: 0.86rem;
     line-height: 1.25;
     max-width: min(90vw, 360px);
   }
 
   .toast-ok {
-    background: var(--color-success-50);
-    border-color: var(--color-success-300);
-    color: var(--color-success-800);
+    background: color-mix(in oklab, var(--color-success-900) 78%, var(--color-surface-950));
+    border-color: color-mix(in oklab, var(--color-success-500) 55%, transparent);
+    color: var(--color-success-200);
   }
 
   .toast-error {
-    background: var(--color-error-50);
-    border-color: var(--color-error-300);
-    color: var(--color-error-800);
+    background: color-mix(in oklab, var(--color-error-900) 78%, var(--color-surface-950));
+    border-color: color-mix(in oklab, var(--color-error-500) 55%, transparent);
+    color: var(--color-error-200);
   }
 </style>

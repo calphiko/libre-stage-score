@@ -209,7 +209,7 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.5);
+    background: oklch(0 0 0 / 0.72);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -219,9 +219,10 @@
 
   .modal {
     width: min(760px, 100%);
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-container);
+    box-shadow: 0 24px 70px oklch(0 0 0 / 0.4);
     padding: 1rem;
     display: flex;
     flex-direction: column;
@@ -235,8 +236,8 @@
   }
 
   .list-card {
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-base);
     padding: 0.75rem;
     display: flex;
     flex-direction: column;

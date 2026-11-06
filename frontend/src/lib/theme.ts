@@ -25,18 +25,16 @@ export const skeletonThemes = [
   "wintry"
 ];
 
-export function getStoredTheme() {
-  if (typeof document === "undefined") return "wintry";
+const defaultTheme = "rosepine";
 
-  const saved = window.localStorage.getItem("skeleton-theme");
-  return saved && skeletonThemes.includes(saved) ? saved : "wintry";
+export function getDefaultTheme() {
+  return defaultTheme;
 }
 
 export function applyTheme(themeName: string) {
-  const safeTheme = skeletonThemes.includes(themeName) ? themeName : "wintry";
+  const safeTheme = skeletonThemes.includes(themeName) ? themeName : defaultTheme;
 
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", safeTheme);
-    window.localStorage.setItem("skeleton-theme", safeTheme);
   }
 }

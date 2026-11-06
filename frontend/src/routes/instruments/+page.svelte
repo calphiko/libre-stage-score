@@ -286,7 +286,7 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.55);
+    background: oklch(0 0 0 / 0.72);
     display: grid;
     place-items: center;
     z-index: 1000;
@@ -295,10 +295,11 @@
 
   .modal {
     width: min(560px, 100%);
-    background: white;
-    border-radius: 12px;
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-container);
     padding: 1.5rem;
-    box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
+    box-shadow: 0 24px 70px oklch(0 0 0 / 0.4);
   }
 
   .field-row {

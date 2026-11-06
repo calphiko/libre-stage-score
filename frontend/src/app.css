@@ -45,9 +45,10 @@ html {
 
 body {
   margin: 0;
-  background-color: var(--color-surface-100-900);
-  color: var(--color-surface-950-50);
-  line-height: 1.35;
+  background-color: var(--color-surface-950);
+  color: var(--color-surface-100);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.5;
 }
 
 main {
@@ -58,14 +59,27 @@ main {
 
 h1 {
   @apply h1;
+  letter-spacing: -0.035em;
+  font-weight: 650;
 }
 
 h2 {
   @apply h2;
+  letter-spacing: -0.025em;
+  font-weight: 600;
+}
+
+.card h1,
+.card h2 {
+  font-size: var(--text-lg);
+  line-height: var(--text-lg--line-height);
+  margin-bottom: 0.6rem;
 }
 
 h3 {
   @apply h3;
+  letter-spacing: -0.02em;
+  font-weight: 600;
 }
 
 h4 {
@@ -91,8 +105,9 @@ textarea {
 input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]),
 select,
 textarea {
-  background-color: color-mix(in oklab, var(--color-surface-50-950) 88%, var(--color-surface-950-50) 12%);
-  --tw-ring-color: color-mix(in oklab, var(--color-surface-950-50) 16%, transparent);
+  background-color: var(--color-surface-900);
+  border-color: var(--color-surface-700);
+  --tw-ring-color: color-mix(in oklab, var(--color-surface-100) 16%, transparent);
   transition:
     background-color var(--default-transition-duration) var(--default-transition-timing-function),
     box-shadow var(--default-transition-duration) var(--default-transition-timing-function);
@@ -101,7 +116,8 @@ textarea {
 input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):hover,
 select:hover,
 textarea:hover {
-  --tw-ring-color: color-mix(in oklab, var(--color-surface-950-50) 22%, transparent);
+  border-color: var(--color-surface-600);
+  --tw-ring-color: color-mix(in oklab, var(--color-surface-100) 22%, transparent);
 }
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):focus,
@@ -110,8 +126,9 @@ textarea:focus,
 input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="range"]):not([type="color"]):focus-within,
 select:focus-within,
 textarea:focus-within {
-  background-color: var(--color-surface-50-950);
-  --tw-ring-color: color-mix(in oklab, var(--color-primary-500) 70%, var(--color-surface-950-50) 20%);
+  background-color: var(--color-surface-900);
+  border-color: var(--color-primary-400);
+  --tw-ring-color: color-mix(in oklab, var(--color-primary-400) 70%, transparent);
 }
 
 button {
@@ -135,6 +152,9 @@ table {
 
 dialog {
   @apply dialog preset-tonal-surface;
+  color: var(--color-surface-100);
+  background-color: var(--color-surface-900);
+  border: 1px solid var(--color-surface-700);
 }
 
 label {
@@ -165,7 +185,8 @@ label:has(input[type="radio"]) {
   @apply card preset-tonal-surface;
   margin-bottom: 0.65rem;
   padding: 0.7rem;
-  box-shadow: 0 1px 3px oklch(0 0 0 / 0.08);
+  border: 1px solid color-mix(in oklab, var(--color-surface-700) 65%, transparent);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.12);
 }
 
 .card > :first-child {
@@ -192,12 +213,14 @@ label:has(input[type="radio"]) {
 }
 
 .clickable-row:hover td {
-  background-color: color-mix(in oklab, var(--color-primary-500) 8%, transparent);
+  background-color: color-mix(in oklab, var(--color-primary-500) 12%, transparent);
 }
 
 .app-header {
-  @apply preset-filled-primary-500;
+  background: color-mix(in oklab, var(--color-surface-950) 72%, var(--color-primary-950));
+  border-bottom: 1px solid color-mix(in oklab, var(--color-surface-700) 55%, transparent);
   margin-bottom: 0.65rem;
+  box-shadow: 0 8px 24px oklch(0 0 0 / 0.14);
 }
 
 .app-header__inner {
@@ -215,6 +238,8 @@ label:has(input[type="radio"]) {
   font-size: var(--text-lg);
   line-height: var(--text-lg--line-height);
   font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.02em;
+  color: var(--color-surface-100);
 }
 
 .app-header__nav {
@@ -241,11 +266,11 @@ label:has(input[type="radio"]) {
 }
 
 .error {
-  color: var(--color-error-700);
+  color: var(--color-error-300);
 }
 
 .ok {
-  color: var(--color-success-700);
+  color: var(--color-success-300);
 }
 
 p {

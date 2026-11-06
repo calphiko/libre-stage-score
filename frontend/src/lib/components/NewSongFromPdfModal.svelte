@@ -660,7 +660,7 @@
   .modal-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.5);
+    background: oklch(0 0 0 / 0.72);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -673,9 +673,10 @@
     width: min(1200px, 100%);
     max-height: 90vh;
     overflow: auto;
-    background: white;
-    border-radius: 12px;
-    box-shadow: 0 18px 40px rgba(15, 23, 42, 0.2);
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-container);
+    box-shadow: 0 24px 70px oklch(0 0 0 / 0.4);
     padding: 1rem;
     display: flex;
     flex-direction: column;
@@ -691,18 +692,18 @@
     justify-content: center;
     flex-direction: column;
     gap: 0.75rem;
-    background: rgba(255, 255, 255, 0.8);
+    background: color-mix(in oklab, var(--color-surface-900) 92%, transparent);
     backdrop-filter: blur(2px);
     font-weight: 600;
-    color: var(--color-text-strong, #111827);
+    color: var(--color-surface-100);
   }
 
   .spinner {
     width: 2.2rem;
     height: 2.2rem;
     border-radius: 50%;
-    border: 3px solid rgba(15, 23, 42, 0.15);
-    border-top-color: var(--color-primary, #2563eb);
+    border: 3px solid var(--color-surface-700);
+    border-top-color: var(--color-primary-400);
     animation: spin 0.8s linear infinite;
   }
 
@@ -728,7 +729,7 @@
 
   .pdf-preview-toggle {
     padding: 0;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 8px;
     overflow: hidden;
     background: transparent;
@@ -746,7 +747,7 @@
   .pdf-preview-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(15, 23, 42, 0.65);
+    background: oklch(0 0 0 / 0.78);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -757,13 +758,14 @@
   .pdf-preview-overlay__content {
     width: min(1100px, 100%);
     height: min(90vh, 900px);
-    background: white;
-    border-radius: 12px;
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+    border-radius: var(--radius-container);
     padding: 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    box-shadow: 0 20px 45px rgba(15, 23, 42, 0.2);
+    box-shadow: 0 24px 70px oklch(0 0 0 / 0.4);
   }
 
   .pdf-preview-overlay__header {
@@ -777,9 +779,9 @@
     flex: 1;
     width: 100%;
     min-height: 0;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 8px;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     pointer-events: none;
   }
 
@@ -788,10 +790,10 @@
     width: 260px;
     max-width: 30vw;
     padding: 0;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 4px;
     overflow: hidden;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     cursor: zoom-in;
   }
 
@@ -811,7 +813,7 @@
   }
 
   .chapter-preview-dialog::backdrop {
-    background: rgba(15, 23, 42, 0.75);
+    background: oklch(0 0 0 / 0.82);
   }
 
   .chapter-preview-dialog__content {
@@ -824,7 +826,8 @@
     padding: 0.75rem;
     overflow: auto;
     border-radius: 8px;
-    background: white;
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
   }
 
   .chapter-preview-dialog__content img {
@@ -852,10 +855,10 @@
     width: 210px;
     min-width: 210px;
     height: 160px;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 8px;
     overflow: hidden;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -874,10 +877,10 @@
     width: min(220px, 100%);
     height: 160px;
     margin-top: 0.75rem;
-    border: 1px solid var(--color-surface-300);
+    border: 1px solid var(--color-surface-700);
     border-radius: 8px;
     overflow: hidden;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
   }
 
   .inline-pdf-preview embed {
@@ -890,22 +893,22 @@
   }
 
   .drop-zone {
-    border: 2px dashed var(--color-surface-300);
+    border: 2px dashed var(--color-surface-700);
     border-radius: var(--radius-base, 0.375rem);
     padding: 1rem;
-    background: var(--color-surface-50);
+    background: var(--color-surface-900);
     transition: border-color 0.15s ease-in-out, background 0.15s ease-in-out;
   }
 
   .drop-zone.active {
     border-color: var(--color-primary-400);
-    background: var(--color-primary-50);
+    background: color-mix(in oklab, var(--color-primary-500) 14%, var(--color-surface-900));
   }
 
   .mapping-hint {
     display: block;
     margin-top: 0.35rem;
-    color: var(--color-surface-600);
+    color: var(--color-surface-300);
     font-size: 0.85rem;
     line-height: 1.4;
   }
