@@ -50,8 +50,8 @@
 <header class="app-header">
   <div class="app-header__inner">
     <a href="/" class="app-header__brand" onclick={closeMenu} aria-label="Zur Startseite">
-      <span class="app-header__logo" aria-hidden="true">Logo</span>
-      <strong class="app-header__title">libre-stage User Service</strong>
+      <span class="app-header__logo" aria-hidden="true"><img width="60" height="60" src="logo_klein.png" alt="libreStage score" /></span>
+
     </a>
     <div class="app-header__actions">
       <NewSongFromPdfModal canManage={user?.user_group === "admin" || user?.user_group === "editor"} onOpen={closeMenu} />
@@ -106,23 +106,39 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
+    transform: translateY(-2px);
     color: inherit;
     text-decoration: none;
   }
 
   .app-header__logo {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     min-width: 2.2rem;
-    height: 1.5rem;
+    box-sizing: border-box;
+    height: 50px;
     padding: 0 0.35rem;
-    border-radius: 0.35rem;
-    border: 1px solid color-mix(in oklab, currentColor 35%, transparent);
-    background: color-mix(in oklab, currentColor 12%, transparent);
+    isolation: isolate;
     font-size: 0.72rem;
     font-weight: 600;
     line-height: 1;
+  }
+
+  .app-header__logo::before {
+    position: absolute;
+    z-index: -1;
+    inset: -0.6rem 0;
+    //border-radius: 0.35rem;
+    //border: 1px solid color-mix(in oklab, currentColor 35%, transparent);
+    //background: color-mix(in oklab, currentColor 12%, transparent);
+    content: "";
+  }
+
+  .app-header__logo img {
+    position: relative;
+    z-index: 1;
   }
 
   .app-header__burger {
