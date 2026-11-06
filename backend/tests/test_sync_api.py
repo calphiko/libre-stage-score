@@ -435,4 +435,5 @@ def test_score_document_fetches_missing_blob_only_after_authorization(sync_clien
     response = client.get(f"/scores/{score_id}/document", headers=headers)
     assert response.status_code == 200
     assert response.content == contents
+    assert response.headers["content-disposition"].startswith("inline;")
     assert fetches == [digest]

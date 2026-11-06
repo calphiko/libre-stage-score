@@ -484,7 +484,12 @@ def get_score_document(score_id: int, current=Depends(auth.get_current_user), db
 
     if file_path is None:
         raise HTTPException(status_code=503, detail="Score PDF is not available on this instance")
-    return FileResponse(path=file_path, media_type="application/pdf", filename=file_path.name)
+    return FileResponse(
+        path=file_path,
+        media_type="application/pdf",
+        filename=file_path.name,
+        content_disposition_type="inline",
+    )
 
 
 @app.get("/version", response_model=dict)
