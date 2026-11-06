@@ -40,6 +40,7 @@
   let editorViewMode = false;
   let songFilter = "";
   let selectedGroupIds = [];
+  let groupFilterInitialized = false;
   let editQueue = Promise.resolve();
   let activeSong = null;
   let activeSongScores = [];
@@ -80,6 +81,7 @@
   };
   let editingSongId = null;
   let songFormMode = "create";
+  let songModal = null;
 
   $: if (error) {
     showToast(error, "error");
@@ -113,6 +115,9 @@
   }
 
   function closeSongModal() {
+    if (songModal?.open) {
+      songModal.close();
+    }
     showSongModal = false;
     resetSongForm();
   }
@@ -151,7 +156,13 @@
     try {
       me = await getUser();
       syncEditorModeState();
-      selectedGroupIds = selectedGroupIds.filter((id) => me.groups?.some((group) => group.id === id));
+      const userGroups = me.groups ?? [];
+      if (!groupFilterInitialized) {
+        selectedGroupIds = userGroups.map((group) => group.id);
+        groupFilterInitialized = true;
+      } else {
+        selectedGroupIds = selectedGroupIds.filter((id) => userGroups.some((group) => group.id === id));
+      }
 
       const view = effectiveSongView();
       const [loadedSongs, loadedInstruments, loadedCollections, loadedSongMetadata, loadedGroupInstruments] = await Promise.all([
@@ -535,13 +546,15 @@
     }
   }
 
-  function beginSongCreate() {
+  async function beginSongCreate() {
     resetSongForm();
     songFormMode = "create";
     showSongModal = true;
+    await tick();
+    if (songModal && !songModal.open) songModal.showModal();
   }
 
-  function beginSongEdit(song) {
+  async function beginSongEdit(song) {
     editingSongId = song.id;
     songFormMode = "edit";
     songForm = {
@@ -561,6 +574,8 @@
       song_with_solo: Boolean(song.song_with_solo),
     };
     showSongModal = true;
+    await tick();
+    if (songModal && !songModal.open) songModal.showModal();
   }
 
   async function saveSong() {
@@ -1240,7 +1255,7 @@
 </dialog>
 
 {#if canManageSongs() && showSongModal}
-  <dialog open class="app-dialog">
+  <dialog bind:this={songModal} class="app-dialog" onclose={() => showSongModal && closeSongModal()}>
     <div class="row" style="justify-content: space-between; align-items: center;">
       <h3 style="margin: 0;">{songFormMode === "edit" ? "Stück bearbeiten" : "Neues Stück anlegen"}</h3>
       <button type="button" class="secondary" onclick={closeSongModal} aria-label="Schließen" title="Schließen">✕</button>

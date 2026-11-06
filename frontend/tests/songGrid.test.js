@@ -45,12 +45,13 @@ test("metadata and group columns display and filter by names", () => {
   assert.equal(group.filterValueGetter({ data: { my_groups: [{ id: 1, name: "Flöten" }] } }), "Flöten");
 });
 
-test("search and multiple group memberships combine without widening access", () => {
+test("search and group memberships combine; no selected groups show no songs", () => {
   const song = {
     name: "Stück", tune: "C", composer: "Bach", notes: null,
     collections: [{ name: "Sommer" }], my_groups: [{ id: 1, name: "Flöten" }],
   };
-  assert.ok(matchesSongFilter(song, " sommer ", []));
+  assert.ok(!matchesSongFilter(song, " sommer ", []));
+  assert.ok(!matchesSongFilter(song, "", []));
   assert.ok(matchesSongFilter(song, "BACH", [1, 2]));
   assert.ok(!matchesSongFilter(song, "Bach", [2]));
   assert.ok(!matchesSongFilter(song, "Mozart", [1]));

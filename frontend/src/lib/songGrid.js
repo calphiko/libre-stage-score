@@ -13,9 +13,7 @@ export function matchesSongFilter(song, search, selectedGroupIds) {
     song.name, song.tune, song.composer, song.arrangement, song.notes,
     song.collections?.map((collection) => collection.name).join(" "),
   ].some((value) => normalize(value).includes(query));
-  return matchesSearch && (
-    selectedGroupIds.length === 0 || song.my_groups?.some((group) => selectedGroupIds.includes(group.id))
-  );
+  return matchesSearch && song.my_groups?.some((group) => selectedGroupIds.includes(group.id));
 }
 
 class CollectionsEditor {
