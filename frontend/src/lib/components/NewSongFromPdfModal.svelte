@@ -10,6 +10,9 @@
   let showModal = false;
   let isDragActive = false;
   let instruments = [];
+  $: sortedInstruments = [...instruments].sort((a, b) =>
+    a.instrument_name.localeCompare(b.instrument_name, "de", { sensitivity: "base" })
+  );
   let songMetadata = null;
   let isLoadingInstruments = false;
   let isAnalyzingPdf = false;
@@ -81,7 +84,6 @@
     if (!canManage) return;
     onOpen();
     showModal = true;
-    if (instruments.length > 0 && songMetadata) return;
     try {
       isLoadingInstruments = true;
       const [loadedInstruments, loadedSongMetadata] = await Promise.all([
@@ -293,7 +295,7 @@
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("songs:changed"));
       }
-      closeModal();
+      resetFlow();
       goto("/songs");
     } catch (err) {
       showToast(err.message, "error");
@@ -615,7 +617,7 @@
                           {:else}
                             <select style="margin-top: 0.25rem;" bind:value={chapterMappings[index].instrument_id}>
                               <option value="">-- bitte wählen --</option>
-                              {#each instruments as instrument}
+                              {#each sortedInstruments as instrument}
                                 <option value={String(instrument.id)}>
                                   {instrument.instrument_name} ({instrument.instrument_tuning})
                                 </option>

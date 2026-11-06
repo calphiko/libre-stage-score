@@ -6,6 +6,7 @@
     createSong,
     deleteSong,
     getCollections,
+    getGroups,
     getGroupInstruments,
     getInstruments,
     getSongMetadata,
@@ -33,6 +34,7 @@
   let ok = "";
   let songs = [];
   let collections = [];
+  let availableGroups = [];
   let instruments = [];
   let songMetadata = { ensembles: [], physical_storages: [], kinds: [], difficulty_levels: [], rhythms: [] };
   const EDITOR_MODE_STORAGE_KEY = "editor-mode-view";
@@ -157,11 +159,12 @@
       me = await getUser();
       syncEditorModeState();
       const userGroups = me.groups ?? [];
+      availableGroups = me.user_group === "admin" ? await getGroups() : userGroups;
       if (!groupFilterInitialized) {
-        selectedGroupIds = userGroups.map((group) => group.id);
+        selectedGroupIds = availableGroups.map((group) => group.id);
         groupFilterInitialized = true;
       } else {
-        selectedGroupIds = selectedGroupIds.filter((id) => userGroups.some((group) => group.id === id));
+        selectedGroupIds = selectedGroupIds.filter((id) => availableGroups.some((group) => group.id === id));
       }
 
       const view = effectiveSongView();
@@ -170,7 +173,7 @@
         getInstruments(view),
         getCollections(),
         getSongMetadata(),
-        Promise.all((me.groups ?? []).map(async (group) => ({
+        Promise.all(availableGroups.map(async (group) => ({
           groupId: Number(group.id),
           instrumentIds: await getGroupInstruments(Number(group.id)),
         }))),
@@ -944,12 +947,12 @@
     </p>
 
     <details class="group-filter">
-      <summary>Nach meinen Gruppen filtern{selectedGroupIds.length ? ` (${selectedGroupIds.length})` : ""}</summary>
+      <summary>Nach Gruppen filtern{selectedGroupIds.length ? ` (${selectedGroupIds.length})` : ""}</summary>
       <div class="group-options">
-        {#each me.groups ?? [] as group (group.id)}
+        {#each availableGroups as group (group.id)}
           <label><input type="checkbox" bind:group={selectedGroupIds} value={group.id} /> {group.name}</label>
         {:else}
-          <span>Keine Gruppenmitgliedschaften vorhanden.</span>
+          <span>Keine Gruppen vorhanden.</span>
         {/each}
       </div>
     </details>
@@ -980,12 +983,12 @@
     </div>
 
     {#if modalTab === "scores"}
-      {#if (me?.groups ?? []).length > 0}
+      {#if availableGroups.length > 0}
         <div class="score-group-filter" aria-label="Stimmen nach Gruppen filtern">
           <strong>Nach Gruppen filtern</strong>
           <span class="score-group-filter__hint">Keine Auswahl zeigt alle Stimmen.</span>
           <div class="score-group-filter__options">
-            {#each me.groups as group (group.id)}
+            {#each availableGroups as group (group.id)}
               <label>
                 <input type="checkbox" bind:group={selectedScoreGroupIds} value={group.id} />
                 {group.name}

@@ -75,9 +75,9 @@
         {/if}
         <a href="/songs" onclick={closeMenu}>Stücke & Stimmen</a>
         {#if user.user_group === "admin" || user.user_group === "editor"}
-          <a href="/collections" onclick={closeMenu}>Sammlungen</a>
           <a href="/groups" onclick={closeMenu}>Gruppenverwaltung</a>
           <a href="/instruments" onclick={closeMenu}>Instrumentenverwaltung</a>
+          <a href="/song-metadata" onclick={closeMenu}>Stammdaten & Sammlungen</a>
         {/if}
         <button class="secondary" onclick={doLogout}>Logout</button>
       {:else}

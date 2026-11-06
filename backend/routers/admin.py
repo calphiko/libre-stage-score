@@ -1601,6 +1601,91 @@ def list_song_metadata(db: Session = Depends(auth.get_db)):
     }
 
 
+SONG_METADATA_MODELS = {
+    "ensembles": (models.Ensemble, "name", "ensemble_id"),
+    "physical_storages": (models.SongStoragePhysical, "storage_path", "physical_storage_id"),
+    "kinds": (models.KindOfSong, "name", "kind_of_song_id"),
+    "difficulty_levels": (models.DifficultyLevel, "name", "difficulty_level_id"),
+    "rhythms": (models.SongRythm, "name", "song_rythm_id"),
+}
+
+
+def _song_metadata_definition(category: str):
+    definition = SONG_METADATA_MODELS.get(category)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Song metadata category not found")
+    return definition
+
+
+def _song_metadata_value(category: str, payload: schemas.SongMetadataCreate | schemas.SongMetadataUpdate) -> str | None:
+    model, field, _song_field = _song_metadata_definition(category)
+    value = getattr(payload, field)
+    other_value = payload.storage_path if field == "name" else payload.name
+    if other_value is not None:
+        raise HTTPException(status_code=422, detail=f"{field} is required for this category")
+    value = value.strip() if value is not None else None
+    if field == "name" and not value:
+        raise HTTPException(status_code=422, detail="Name must not be empty")
+    if field == "storage_path" and value == "":
+        value = None
+    if field == "storage_path" and value is None and not (payload.notes or "").strip():
+        raise HTTPException(status_code=422, detail="Storage path or notes must be provided")
+    return value
+
+
+@router.post("/song-metadata/{category}")
+def create_song_metadata(
+    category: str,
+    payload: schemas.SongMetadataCreate,
+    db: Session = Depends(auth.get_db),
+):
+    model, field, _song_field = _song_metadata_definition(category)
+    value = _song_metadata_value(category, payload)
+    if value is not None and db.query(model).filter(getattr(model, field) == value).first():
+        raise HTTPException(status_code=400, detail="Song metadata already exists")
+    item = model(**{field: value, "notes": payload.notes})
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.put("/song-metadata/{category}/{item_id}")
+def update_song_metadata(
+    category: str,
+    item_id: int,
+    payload: schemas.SongMetadataUpdate,
+    db: Session = Depends(auth.get_db),
+):
+    model, field, _song_field = _song_metadata_definition(category)
+    item = db.query(model).filter(model.id == item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Song metadata not found")
+    value = _song_metadata_value(category, payload)
+    if value is not None and db.query(model).filter(
+        getattr(model, field) == value, model.id != item_id
+    ).first():
+        raise HTTPException(status_code=400, detail="Song metadata already exists")
+    setattr(item, field, value)
+    item.notes = payload.notes
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/song-metadata/{category}/{item_id}")
+def delete_song_metadata(category: str, item_id: int, db: Session = Depends(auth.get_db)):
+    model, _field, song_field = _song_metadata_definition(category)
+    item = db.query(model).filter(model.id == item_id).first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Song metadata not found")
+    if db.query(models.Song).filter(getattr(models.Song, song_field) == item_id).first():
+        raise HTTPException(status_code=409, detail="Song metadata is used by a song")
+    soft_delete(db, item)
+    db.commit()
+    return {"message": "Song metadata deleted"}
+
+
 @router.post("/collections", response_model=schemas.CollectionOut)
 def create_collection(collection: schemas.CollectionCreate, db: Session = Depends(auth.get_db)):
     existing = db.query(models.Collection).filter(models.Collection.name == collection.name).first()
@@ -1659,20 +1744,33 @@ def list_songs(request: Request, view: str | None = None, db: Session = Depends(
     songs = query.order_by(models.Song.name.asc()).all()
     groups_by_song: dict[int, list[schemas.GroupOut]] = {}
     if user_id is not None and songs:
-        rows = (
+        group_query = (
             db.query(models.Score.song_id, models.Group.id, models.Group.name, models.Group.notes)
             .join(models.Song, models.Song.id == models.Score.song_id)
             .join(models.Instrument, models.Instrument.id == models.Score.instrument_id)
             .join(models.GroupInstrumentMembership, models.GroupInstrumentMembership.instrument_id == models.Score.instrument_id)
-            .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
-            .join(models.Group, models.Group.id == models.UserGroupMembership.group_id)
+        )
+        if auth.is_admin(user.get("user_group")):
+            group_query = group_query.join(
+                models.Group, models.Group.id == models.GroupInstrumentMembership.group_id
+            )
+        else:
+            group_query = (
+                group_query
+                .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
+                .join(models.Group, models.Group.id == models.UserGroupMembership.group_id)
+                .filter(
+                    models.UserGroupMembership.user_id == user_id,
+                    models.UserGroupMembership.deleted_at.is_(None),
+                )
+            )
+        rows = (
+            group_query
             .filter(
-                models.UserGroupMembership.user_id == user_id,
                 models.Song.deleted_at.is_(None),
                 models.Score.deleted_at.is_(None),
                 models.Instrument.deleted_at.is_(None),
                 models.GroupInstrumentMembership.deleted_at.is_(None),
-                models.UserGroupMembership.deleted_at.is_(None),
                 models.Group.deleted_at.is_(None),
             )
             .distinct()

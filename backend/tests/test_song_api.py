@@ -80,7 +80,11 @@ def test_song_groups_and_access_modes(api, role, view, names):
         {"id": ids["groups"][0], "name": "Alpha", "notes": "Info"},
         {"id": ids["groups"][1], "name": "Beta", "notes": None},
     ]
-    assert all(song["my_groups"] == [] for song in songs[1:])
+    if role == "admin":
+        assert songs[1]["my_groups"] == [{"id": ids["groups"][2], "name": "Other", "notes": None}]
+        assert songs[2]["my_groups"] == []
+    else:
+        assert all(song["my_groups"] == [] for song in songs[1:])
 
 
 @pytest.mark.parametrize(("role", "view", "count"), [("user", "editor", 0), ("editor", "editor", 3), ("admin", "user", 3)])
@@ -256,3 +260,53 @@ def test_other_song_responses_default_to_empty_groups(api):
     for response in (created, updated, collections):
         assert response.status_code == 200
         assert response.json()["my_groups"] == []
+
+
+@pytest.mark.parametrize(
+    ("category", "payload", "field"),
+    [
+        ("ensembles", {"name": "Duo", "notes": "Two players"}, "name"),
+        ("kinds", {"name": "March"}, "name"),
+        ("difficulty_levels", {"name": "Easy"}, "name"),
+        ("rhythms", {"name": "Waltz"}, "name"),
+        ("physical_storages", {"storage_path": "Shelf A"}, "storage_path"),
+    ],
+)
+def test_song_metadata_can_be_created_updated_and_deleted(api, category, payload, field):
+    client, _sessions, _ = api
+    editor_headers = headers("editor", "editor")
+    url = f"/admin/song-metadata/{category}"
+    assert client.post(url, json=payload).status_code == 401
+
+    created = client.post(url, json=payload, headers=editor_headers)
+    assert created.status_code == 200
+    item = created.json()
+    assert item[field] == payload[field]
+
+    updated_payload = {**payload, field: "Updated value"}
+    updated = client.put(f"{url}/{item['id']}", json=updated_payload, headers=editor_headers)
+    assert updated.status_code == 200
+    assert updated.json()[field] == "Updated value"
+
+    deleted = client.delete(f"{url}/{item['id']}", headers=editor_headers)
+    assert deleted.status_code == 200
+    assert all(row["id"] != item["id"] for row in client.get("/admin/song-metadata", headers=editor_headers).json()[category])
+
+
+def test_song_metadata_cannot_be_deleted_while_used(api):
+    client, sessions, _ = api
+    song_id = seed(sessions)["songs"][0]
+    with sessions() as db:
+        ensemble = models.Ensemble(name="Used ensemble")
+        db.add(ensemble)
+        db.flush()
+        db.query(models.Song).filter_by(id=song_id).update({"ensemble_id": ensemble.id})
+        db.commit()
+        ensemble_id = ensemble.id
+
+    response = client.delete(
+        f"/admin/song-metadata/ensembles/{ensemble_id}",
+        headers=headers("editor", "editor"),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Song metadata is used by a song"

@@ -165,6 +165,18 @@ class SongMetadataItemOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SongMetadataCreate(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    storage_path: str | None = Field(default=None, max_length=2048)
+    notes: str | None = None
+
+
+class SongMetadataUpdate(SongMetadataCreate):
+    pass
+
+
 class SongStoragePhysicalOut(BaseModel):
     id: int
     storage_path: str | None = None

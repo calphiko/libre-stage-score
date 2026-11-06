@@ -323,6 +323,31 @@ export async function getSongMetadata() {
   return res.json();
 }
 
+export async function createSongMetadata(category, data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/song-metadata/${category}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updateSongMetadata(category, itemId, data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/song-metadata/${category}/${itemId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteSongMetadata(category, itemId) {
+  const res = await fetchWithAuth(`${API_URL}/admin/song-metadata/${category}/${itemId}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
 export async function createCollection(data) {
   const res = await fetchWithAuth(`${API_URL}/admin/collections`, {
     method: "POST",
