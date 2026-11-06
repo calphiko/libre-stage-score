@@ -9,6 +9,7 @@ import sqlite3
 import tempfile
 import uuid
 import zipfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -138,7 +139,7 @@ def restore_snapshot(
 ) -> str:
     database_path = _sqlite_path()
     if database_path.exists():
-        with sqlite3.connect(database_path) as existing:
+        with closing(sqlite3.connect(database_path)) as existing:
             tables = existing.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             ).fetchall()
@@ -177,7 +178,7 @@ def restore_snapshot(
         staged_path = Path(handle.name)
     try:
         staged_path.write_bytes(database_bytes)
-        with sqlite3.connect(staged_path) as connection:
+        with closing(sqlite3.connect(staged_path)) as connection:
             if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise RuntimeError("Snapshot database failed SQLite integrity_check")
             tables = {
@@ -221,6 +222,11 @@ def restore_snapshot(
             if "file_blobs" in tables:
                 connection.execute("UPDATE file_blobs SET status = 'missing'")
             connection.commit()
+            busy, _log_frames, _checkpointed_frames = connection.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)"
+            ).fetchone()
+            if busy:
+                raise RuntimeError("Could not checkpoint the restored SQLite database")
         os.replace(staged_path, database_path)
     finally:
         staged_path.unlink(missing_ok=True)

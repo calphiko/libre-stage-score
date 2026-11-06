@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend import auth, models, schemas
 from backend.database import engine
+from backend.paths import data_root
 from backend.routers import admin, password_reset
 from backend.sync.router import router as sync_router
 from backend.sync import worker as sync_worker
@@ -78,7 +79,7 @@ def _ensure_backward_compatible_schema() -> None:
 
 
 _ensure_backward_compatible_schema()
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = data_root()
 SCORES_STORAGE_ROOT = PROJECT_ROOT / "backend" / "storage" / "scores"
 
 logger = logging.getLogger(__name__)

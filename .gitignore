@@ -15,3 +15,6 @@ frontend/build/
 frontend/dist/
 *.egg-info/
 .idea/
+desktop/target/
+desktop/binaries/
+desktop/node_modules/

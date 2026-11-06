@@ -1,0 +1,13 @@
+[package]
+name = "libre-stage-spoke"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+fs2 = "0.4"
+rfd = "0.15"
+tauri = { version = "2", features = [] }

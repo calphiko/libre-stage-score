@@ -606,6 +606,10 @@ export function getScoreDocumentUrl(scoreId) {
   return apiUrl(`/scores/${scoreId}/document`);
 }
 
+export async function openScoreInSystemViewer(scoreId) {
+  await fetchWithAuth(apiUrl(`/desktop/scores/${scoreId}/open`), { method: "POST" });
+}
+
 export async function verifyPwResetToken(resetToken) {
   const res = await fetchApi(apiUrl("/password_reset/verify_reset_token"), {
     method: "GET",
