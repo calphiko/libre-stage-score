@@ -1646,24 +1646,47 @@ def delete_collection(collection_id: int, db: Session = Depends(auth.get_db)):
 def list_songs(request: Request, view: str | None = None, db: Session = Depends(auth.get_db)):
     user = auth.get_current_user(request, db)
     mode = (view or "").lower()
-    if auth.is_admin(user.get("user_group")) or (mode == "editor" and auth.is_editor_or_admin(user.get("user_group"))):
-        return db.query(models.Song).options(selectinload(models.Song.collections)).order_by(models.Song.name.asc()).all()
-
     user_id = user.get("user_id")
-    if user_id is None:
-        return []
+    query = db.query(models.Song).options(selectinload(models.Song.collections))
+    if not (auth.is_admin(user.get("user_group")) or (mode == "editor" and auth.is_editor_or_admin(user.get("user_group")))):
+        if user_id is None:
+            return []
+        accessible_song_ids = _user_accessible_song_ids(db, user_id)
+        if not accessible_song_ids:
+            return []
+        query = query.filter(models.Song.id.in_(sorted(accessible_song_ids)))
 
-    accessible_song_ids = _user_accessible_song_ids(db, user_id)
-    if not accessible_song_ids:
-        return []
-
-    return (
-        db.query(models.Song)
-        .options(selectinload(models.Song.collections))
-        .filter(models.Song.id.in_(sorted(accessible_song_ids)))
-        .order_by(models.Song.name.asc())
-        .all()
-    )
+    songs = query.order_by(models.Song.name.asc()).all()
+    groups_by_song: dict[int, list[schemas.GroupOut]] = {}
+    if user_id is not None and songs:
+        rows = (
+            db.query(models.Score.song_id, models.Group.id, models.Group.name, models.Group.notes)
+            .join(models.Song, models.Song.id == models.Score.song_id)
+            .join(models.Instrument, models.Instrument.id == models.Score.instrument_id)
+            .join(models.GroupInstrumentMembership, models.GroupInstrumentMembership.instrument_id == models.Score.instrument_id)
+            .join(models.UserGroupMembership, models.UserGroupMembership.group_id == models.GroupInstrumentMembership.group_id)
+            .join(models.Group, models.Group.id == models.UserGroupMembership.group_id)
+            .filter(
+                models.UserGroupMembership.user_id == user_id,
+                models.Song.deleted_at.is_(None),
+                models.Score.deleted_at.is_(None),
+                models.Instrument.deleted_at.is_(None),
+                models.GroupInstrumentMembership.deleted_at.is_(None),
+                models.UserGroupMembership.deleted_at.is_(None),
+                models.Group.deleted_at.is_(None),
+            )
+            .distinct()
+            .order_by(models.Group.name.asc(), models.Group.id.asc())
+            .all()
+        )
+        for song_id, group_id, name, notes in rows:
+            groups_by_song.setdefault(song_id, []).append(schemas.GroupOut(id=group_id, name=name, notes=notes))
+    result = []
+    for song in songs:
+        output = schemas.SongOut.model_validate(song)
+        output.my_groups = groups_by_song.get(song.id, [])
+        result.append(output)
+    return result
 
 
 def _validate_song_metadata_references(payload: Any, db: Session) -> None:
@@ -1698,6 +1721,20 @@ def update_song(song_id: int, song: schemas.SongUpdate, db: Session = Depends(au
 
     _validate_song_metadata_references(song, db)
     for key, value in song.model_dump().items():
+        setattr(db_song, key, value)
+    db.commit()
+    db.refresh(db_song)
+    return db_song
+
+
+@router.patch("/songs/{song_id}", response_model=schemas.SongOut)
+def patch_song(song_id: int, song: schemas.SongPatch, db: Session = Depends(auth.get_db)):
+    db_song = db.query(models.Song).options(selectinload(models.Song.collections)).filter(models.Song.id == song_id).first()
+    if not db_song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    _validate_song_metadata_references(song, db)
+    for key, value in song.model_dump(exclude_unset=True).items():
         setattr(db_song, key, value)
     db.commit()
     db.refresh(db_song)

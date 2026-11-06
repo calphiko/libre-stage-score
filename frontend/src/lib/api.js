@@ -90,7 +90,10 @@ async function fetchWithAuth(url, options = {}) {
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? "Anfrage fehlgeschlagen");
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((item) => `${item.loc?.slice(1).join(".") || "Eingabe"}: ${item.msg}`).join("; ")
+      : body.detail;
+    throw new Error(detail ?? "Anfrage fehlgeschlagen");
   }
   return res;
 }
@@ -375,6 +378,15 @@ export async function createSong(data) {
 export async function updateSong(songId, data) {
   const res = await fetchWithAuth(`${API_URL}/admin/songs/${songId}`, {
     method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function patchSong(songId, data) {
+  const res = await fetchWithAuth(`${API_URL}/admin/songs/${songId}`, {
+    method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });

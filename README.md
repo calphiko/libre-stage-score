@@ -20,6 +20,32 @@ Gruppen, Instrumente, Stücke und Noten-PDFs) zurück. Der Seed verweigert den L
 Sync-Peers konfiguriert sind. Nur für Entwicklungsdatenbanken verwenden; bei vorhandenen
 Nutzdaten stattdessen `task db:migrate` ausführen.
 
+## Stücktabelle
+
+Unter „Spalten auswählen“ lassen sich alle Stückfelder ein- und ausblenden. Die bisherige
+Suche und die Spaltenfilter wirken gemeinsam; „Nach meinen Gruppen filtern“ zeigt Stücke
+mit mindestens einer Stimme für eine der ausgewählten Gruppen. Die Schaltfläche „Stimmen
+öffnen“ öffnet das Stimmenmodal.
+
+Editoren und Admins können Zellen per Doppelklick oder Enter bearbeiten. Änderungen werden
+nach Abschluss der Eingabe gespeichert; Sammlungen werden über eine Mehrfachauswahl
+bearbeitet. Fehler werden angezeigt und der bisherige Wert bleibt erhalten.
+
+## Song-API
+
+`GET /admin/songs` liefert je sichtbarem Stück `my_groups` mit `{id, name, notes}`:
+nur eigene Gruppen, deren Instrument mindestens einer aktiven Stimme des Stücks
+entspricht, unabhängig von einer PDF-Datei. Gruppen sind nach Name und ID sortiert;
+ohne zugehörige Benutzer-ID ist die Liste leer. Sichtbarkeit und `view` bleiben
+unverändert. Andere Song-Antworten enthalten `my_groups` als leere Liste.
+
+Editoren und Admins können mit `PATCH /admin/songs/{id}` einzelne Songfelder ändern;
+nicht übermittelte Felder bleiben unverändert. Nullable Felder lassen sich mit `null`
+leeren, Name und die beiden booleschen Felder nicht. Sammlungen werden weiterhin
+separat bearbeitet. Unbekannte Felder sind unzulässig; ungültige Werte liefern 422,
+fehlende oder gelöschte Stücke bzw. Metadatenreferenzen 404. Änderungen werden wie
+bei PUT über die Sync-Outbox repliziert.
+
 ## Betrieb pro Standort
 
 Jeder Standort benötigt eine eigene Backend-Instanz, Datenbank, lokale Dateiablage und

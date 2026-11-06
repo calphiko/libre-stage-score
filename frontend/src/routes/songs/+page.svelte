@@ -12,6 +12,7 @@
     getScoreDocumentUrl,
     getSongs,
     getUser,
+    patchSong,
     previewScorePdfUpload,
     commitScorePdfUpload,
     updateScore,
@@ -23,6 +24,8 @@
   import OpenFileIcon from "$lib/components/icons/OpenFileIcon.svelte";
   import SaveIcon from "$lib/components/icons/SaveIcon.svelte";
   import { showToast } from "$lib/toasts.js";
+  import DataGrid from "$lib/components/DataGrid.svelte";
+  import { createSongColumns, matchesSongFilter } from "$lib/songGrid.js";
 
   let me = null;
   let error = "";
@@ -35,6 +38,8 @@
 
   let editorViewMode = false;
   let songFilter = "";
+  let selectedGroupIds = [];
+  let editQueue = Promise.resolve();
   let activeSong = null;
   let activeSongScores = [];
   let scoreInstrumentSelection = {};
@@ -143,6 +148,7 @@
     try {
       me = await getUser();
       syncEditorModeState();
+      selectedGroupIds = selectedGroupIds.filter((id) => me.groups?.some((group) => group.id === id));
 
       const view = effectiveSongView();
       const [loadedSongs, loadedInstruments, loadedCollections, loadedSongMetadata] = await Promise.all([
@@ -166,21 +172,37 @@
     return (value ?? "").toString().toLowerCase();
   }
 
-  $: filteredSongs = songs.filter((song) => {
-    const search = normalized(songFilter).trim();
-    if (!search) return true;
-    return (
-      normalized(song.name).includes(search) ||
-      normalized(song.tune).includes(search) ||
-      normalized(song.composer).includes(search) ||
-      normalized(song.arrangement).includes(search) ||
-      normalized(song.notes).includes(search) ||
-      normalized(song.collections?.map((collection) => collection.name).join(" ")).includes(search)
-    );
+  $: filteredSongs = songs.filter((song) => matchesSongFilter(song, songFilter, selectedGroupIds));
+
+  $: songColumns = createSongColumns(songMetadata, collections, canManageSongs(), {
+    open: openScoresModal, edit: beginSongEdit, remove: removeSong,
   });
 
-  function collectionNames(song) {
-    return song.collections?.map((collection) => collection.name).join(", ") || "-";
+  function editSongCell(event) {
+    if (!canManageSongs()) return;
+    const field = event.colDef.field;
+    let value = event.newValue;
+    if (field.endsWith("_id")) value = value === "" || value == null ? null : Number(value);
+    if (typeof value === "string" && !field.endsWith("_id")) {
+      value = value.trim();
+      if (field !== "name" && value === "") value = null;
+    }
+    if (field === "name" && !value) {
+      error = "Bitte einen Titel für das Stück eingeben.";
+      return;
+    }
+    editQueue = editQueue.then(async () => {
+      try {
+        if (field === "collections") {
+          await updateSongCollections(event.data.id, value.map((collection) => collection.id));
+        } else {
+          await patchSong(event.data.id, { [field]: value });
+        }
+        await refreshSongsAndCollections();
+      } catch (err) {
+        error = err.message;
+      }
+    });
   }
 
   function isPdfStoragePath(path) {
@@ -623,6 +645,26 @@
 </script>
 
 <style>
+  :global(body:has(.songs-page)) {
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+  }
+
+  :global(main:has(.songs-page)) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    width: 100%;
+    max-width: none;
+  }
+
+  .songs-page {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+
   .app-dialog {
     width: min(1500px, 96vw);
     max-width: 96vw;
@@ -777,10 +819,43 @@
   .inline-toggle--filter input {
     accent-color: var(--color-primary-400);
   }
+
+  .group-filter {
+    margin-bottom: 0.6rem;
+  }
+  .group-filter summary {
+    cursor: pointer;
+  }
+  .group-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    padding: 0.6rem 0;
+  }
+
+  :global(.song-grid-actions) {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    height: 100%;
+  }
+  :global(.song-grid-actions button) {
+    padding: 0.3rem;
+    min-width: 2rem;
+  }
+  :global(.song-collections-editor) {
+    display: grid;
+    gap: 0.4rem;
+    padding: 0.7rem;
+    max-height: 300px;
+    overflow: auto;
+    background: var(--color-surface-900);
+    border: 1px solid var(--color-surface-700);
+  }
 </style>
 
 {#if me}
-  <section class="card">
+  <section class="card songs-page">
     <div class="row" style="align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem;">
       <div class="row" style="align-items: center; gap: 0.75rem;">
         <h2 style="margin: 0;">Stücke</h2>
@@ -814,47 +889,18 @@
       <input placeholder="Filtern (Name, Tonart, Komponist, Arrangement, Notizen)" bind:value={songFilter} />
     </p>
 
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Name</th>
-            <th>Tonart</th>
-            <th>Komponist</th>
-            <th>Arrangement</th>
-            <th>Sammlungen</th>
-            <th>Länge</th>
-            <th>Notizen</th>
-            {#if canManageSongs()}
-              <th>Aktion</th>
-            {/if}
-          </tr>
-        </thead>
-        <tbody>
-          {#each filteredSongs as song}
-            <tr class="clickable-row" onclick={() => openScoresModal(song)}>
-              <td>{song.id}</td>
-              <td>{song.name}</td>
-              <td>{song.tune ?? "-"}</td>
-              <td>{song.composer ?? "-"}</td>
-              <td>{song.arrangement ?? "-"}</td>
-              <td>{collectionNames(song)}</td>
-              <td>{song.length ?? "-"}</td>
-              <td>{song.notes ?? "-"}</td>
-              {#if canManageSongs()}
-                <td>
-                  <div class="row">
-                    <button class="secondary" onclick={(event) => { event.stopPropagation(); beginSongEdit(song); }} aria-label="Stück bearbeiten" title="Stück bearbeiten"><EditIcon /></button>
-                    <button class="warn" onclick={(event) => { event.stopPropagation(); removeSong(song); }} aria-label="Stück löschen" title="Stück löschen"><DeleteIcon /></button>
-                  </div>
-                </td>
-              {/if}
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </div>
+    <details class="group-filter">
+      <summary>Nach meinen Gruppen filtern{selectedGroupIds.length ? ` (${selectedGroupIds.length})` : ""}</summary>
+      <div class="group-options">
+        {#each me.groups ?? [] as group (group.id)}
+          <label><input type="checkbox" bind:group={selectedGroupIds} value={group.id} /> {group.name}</label>
+        {:else}
+          <span>Keine Gruppenmitgliedschaften vorhanden.</span>
+        {/each}
+      </div>
+    </details>
+    <DataGrid rows={filteredSongs} columns={songColumns} onEdit={editSongCell} label="Stücke"
+      noRowsText="Keine Stücke gefunden" fixedColumns={["actions"]} fillHeight={true} />
   </section>
 
   <dialog bind:this={scoresModal} class="app-dialog">

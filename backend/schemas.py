@@ -206,9 +206,19 @@ class SongUpdate(SongBase):
     pass
 
 
+class SongPatch(SongBase):
+    model_config = {"extra": "forbid"}
+
+    # Omission is allowed; explicitly supplied null must fail validation.
+    name: str = Field(default_factory=lambda: None, min_length=1, max_length=512)
+    score_completed: bool = Field(default_factory=lambda: None)
+    song_with_solo: bool = Field(default_factory=lambda: None)
+
+
 class SongOut(SongBase):
     id: int
     collections: list[CollectionOut] = Field(default_factory=list)
+    my_groups: list[GroupOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
