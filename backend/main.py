@@ -20,6 +20,7 @@ from backend.bootstrap import initialize_missing_database
 from backend.database import engine
 from backend.paths import data_root
 from backend.routers import admin, password_reset
+from backend.schema import ensure_user_columns
 from backend.sync.router import router as sync_router
 from backend.sync import worker as sync_worker
 from backend.sync import service as sync_service
@@ -42,16 +43,7 @@ def _ensure_backward_compatible_schema() -> None:
         with engine.begin() as connection:
             connection.execute(text("ALTER TABLE scores ADD COLUMN file_hash VARCHAR(64)"))
 
-    user_columns = _sqlite_column_names("users")
-    if user_columns:
-        for column_name, column_def in {
-            "musician": "BOOLEAN NOT NULL DEFAULT 0",
-            "is_singer": "BOOLEAN NOT NULL DEFAULT 0",
-            "mm_username": "VARCHAR(128)",
-        }.items():
-            if column_name not in user_columns:
-                with engine.begin() as connection:
-                    connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_def}"))
+    ensure_user_columns(engine)
 
     existing_tables = set()
     with engine.connect() as connection:

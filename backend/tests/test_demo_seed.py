@@ -9,7 +9,30 @@ from sqlalchemy.orm import Session
 from backend import database, models
 from backend.migrations import init_demo_users as demo_seed
 from backend.routers import admin
+from backend.schema import ensure_user_columns
 from backend.sync import service as sync_service
+
+
+def test_ensure_user_columns_preserves_existing_data(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'users.sqlite3'}")
+    try:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "CREATE TABLE users (id INTEGER PRIMARY KEY, musician BOOLEAN NOT NULL DEFAULT 0)"
+            )
+            connection.exec_driver_sql("INSERT INTO users (id, musician) VALUES (1, 1)")
+
+        ensure_user_columns(engine)
+        ensure_user_columns(engine)
+
+        with engine.connect() as connection:
+            columns = {column["name"] for column in inspect(connection).get_columns("users")}
+            assert {"musician", "is_singer", "mm_username"} <= columns
+            assert tuple(connection.exec_driver_sql(
+                "SELECT musician, is_singer, mm_username FROM users WHERE id = 1"
+            ).one()) == (1, 0, None)
+    finally:
+        engine.dispose()
 
 
 def test_demo_seed_upgrades_legacy_schema_before_seeding(monkeypatch, tmp_path):

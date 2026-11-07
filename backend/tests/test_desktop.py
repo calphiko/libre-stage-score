@@ -185,9 +185,9 @@ def prepare_database_without_identity(tmp_path, *, peer=False):
     password_hash = bcrypt.hashpw(b"test-password", bcrypt.gensalt()).decode()
     with sqlite3.connect(data / "backend/db/app.db") as db:
         db.execute(
-            "INSERT INTO users (user_name, user_pw, user_group, email, clear_name, musician, "
-            "is_singer, status, uuid, updated_at, updated_by_node, version) "
-            "VALUES (?, ?, 'admin', '', 'Test', 0, 0, 'active', ?, 1, 'unconfigured', 1)",
+            "INSERT INTO users (user_name, user_pw, user_group, email, clear_name, "
+            "status, uuid, updated_at, updated_by_node, version) "
+            "VALUES (?, ?, 'admin', '', 'Test', 'active', ?, 1, 'unconfigured', 1)",
             ("test-user", password_hash, str(uuid.uuid4())),
         )
         db.execute(

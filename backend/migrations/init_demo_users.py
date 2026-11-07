@@ -13,6 +13,7 @@ from backend import models  # noqa: E402
 from backend.auth import hash_pw  # noqa: E402
 from backend.database import SQLALCHEMY_DATABASE_URL  # noqa: E402
 from backend.routers import admin  # noqa: E402
+from backend.schema import ensure_user_columns  # noqa: E402
 from backend.sync import service as sync_service  # noqa: E402
 
 
@@ -61,6 +62,7 @@ def run(*, reset: bool = True, created_files: list[Path] | None = None) -> None:
     session_factory = sessionmaker(bind=engine)
     try:
         models.Base.metadata.create_all(bind=engine)
+        ensure_user_columns(engine)
         with session_factory() as db:
             _seed(db, reset=reset, created_files=created_files)
     finally:
