@@ -50,8 +50,7 @@
 <header class="app-header">
   <div class="app-header__inner">
     <a href="/" class="app-header__brand" onclick={closeMenu} aria-label="Zur Startseite">
-      <span class="app-header__logo" aria-hidden="true"><img width="60" height="60" src="logo_klein.png" alt="libreStage score" /></span>
-
+      <span class="app-header__logo" aria-hidden="true"><img src="logo_klein.png" alt="libreStage score" /></span>
     </a>
     <div class="app-header__actions">
       <NewSongFromPdfModal canManage={user?.user_group === "admin" || user?.user_group === "editor"} onOpen={closeMenu} />
@@ -139,6 +138,8 @@
   .app-header__logo img {
     position: relative;
     z-index: 1;
+    width: auto;
+    height: 100%;
   }
 
   .app-header__burger {
