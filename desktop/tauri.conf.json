@@ -4,7 +4,12 @@
   "version": "0.1.0",
   "identifier": "org.librestage.score.spoke",
   "build": {
-    "frontendDist": "../frontend/build"
+    "beforeBuildCommand": "uv run --no-project python build_sidecar.py",
+    "beforeDevCommand": {
+      "script": "uv run --no-project python build_sidecar.py",
+      "wait": true
+    },
+    "frontendDist": "target/frontend-dist"
   },
   "app": {
     "windows": [],

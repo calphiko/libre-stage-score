@@ -18,3 +18,4 @@ frontend/dist/
 desktop/target/
 desktop/binaries/
 desktop/node_modules/
+desktop/gen/
