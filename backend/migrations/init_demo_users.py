@@ -19,6 +19,7 @@ from backend.sync import service as sync_service  # noqa: E402
 def _upgrade_schema() -> None:
     project_root = Path(__file__).resolve().parents[2]
     alembic_config = Config(str(project_root / "alembic.ini"))
+    alembic_config.set_main_option("script_location", str(project_root / "backend" / "alembic"))
     alembic_config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
     engine = create_engine(SQLALCHEMY_DATABASE_URL)
     try:
@@ -39,16 +40,18 @@ def _upgrade_schema() -> None:
     command.upgrade(alembic_config, "head")
 
 
-def _create_demo_pdf(target_path: Path) -> str:
+def _create_demo_pdf(target_path: Path, *, overwrite: bool = True, created_files: list[Path] | None = None) -> str:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     writer = PdfWriter()
     writer.add_blank_page(width=595, height=842)
-    with target_path.open("wb") as handle:
+    with target_path.open("wb" if overwrite else "xb") as handle:
+        if created_files is not None:
+            created_files.append(target_path)
         writer.write(handle)
     return admin._hash_file(target_path)
 
 
-def run() -> None:
+def run(*, reset: bool = True, created_files: list[Path] | None = None) -> None:
     _upgrade_schema()
 
     engine = create_engine(
@@ -56,45 +59,34 @@ def run() -> None:
         connect_args={"check_same_thread": False} if SQLALCHEMY_DATABASE_URL.startswith("sqlite") else {},
     )
     session_factory = sessionmaker(bind=engine)
-    db = session_factory()
-
-    models.Base.metadata.create_all(bind=engine)
-
-    if db.query(models.SyncPeer).count():
-        db.close()
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        with session_factory() as db:
+            _seed(db, reset=reset, created_files=created_files)
+    finally:
         engine.dispose()
+
+
+def _seed(db, *, reset: bool, created_files: list[Path] | None) -> None:
+    if db.query(models.SyncPeer).count():
         raise RuntimeError("Refusing to reseed demo data while synchronization peers are configured")
 
-    db.query(models.ChangeLog).delete()
-    db.query(models.SyncAudit).delete()
-    db.query(models.SyncConflict).delete()
-    db.query(models.FileBlob).delete()
-    db.query(models.SongCollection).delete()
-    db.query(models.DocumentAccess).delete()
-    db.query(models.SongUploads).delete()
-    db.query(models.GroupInstrumentMembership).delete()
-    db.query(models.UserGroupMembership).delete()
-    db.query(models.UserInstrument).delete()
-    db.query(models.Score).delete()
-    db.query(models.RefreshToken).delete()
-    db.query(models.TokenBlacklist).delete()
-    db.query(models.UsedPasswordResetToken).delete()
-    db.query(models.Collection).delete()
-    db.query(models.Group).delete()
-    db.query(models.Song).delete()
-    db.query(models.Ensemble).delete()
-    db.query(models.SongStoragePhysical).delete()
-    db.query(models.KindOfSong).delete()
-    db.query(models.DifficultyLevel).delete()
-    db.query(models.SongRythm).delete()
-    db.query(models.Instrument).delete()
-    db.query(models.User).delete()
-    if admin.SCORES_UPLOAD_DIR.exists():
-        for path in sorted(admin.SCORES_UPLOAD_DIR.rglob("*"), reverse=True):
-            if path.is_file():
-                path.unlink()
-            elif path.is_dir():
-                path.rmdir()
+    if reset:
+        for model in (
+            models.ChangeLog, models.SyncAudit, models.SyncConflict, models.FileBlob,
+            models.SongCollection, models.DocumentAccess, models.SongUploads,
+            models.GroupInstrumentMembership, models.UserGroupMembership, models.UserInstrument,
+            models.Score, models.RefreshToken, models.TokenBlacklist, models.UsedPasswordResetToken,
+            models.Collection, models.Group, models.Song, models.Ensemble, models.SongStoragePhysical,
+            models.KindOfSong, models.DifficultyLevel, models.SongRythm, models.Instrument, models.User,
+        ):
+            db.query(model).delete()
+        if admin.SCORES_UPLOAD_DIR.exists():
+            for path in sorted(admin.SCORES_UPLOAD_DIR.rglob("*"), reverse=True):
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    path.rmdir()
     admin.SCORES_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
     demo_pw = hash_pw("Demo1234!")
@@ -331,7 +323,7 @@ def run() -> None:
     registered_blob_hashes: set[str] = set()
     for song, instrument, storage_path, notes in seeded_scores:
         pdf_path = admin.SCORES_UPLOAD_DIR / storage_path
-        file_hash = _create_demo_pdf(pdf_path)
+        file_hash = _create_demo_pdf(pdf_path, overwrite=reset, created_files=created_files)
         db.add(
             models.Score(
                 song_id=song.id,

@@ -73,6 +73,7 @@ def test_desktop_service_persists_data_and_serves_frontend(tmp_path):
     try:
         with httpx.Client(base_url=url) as client:
             assert client.get("/health").json()["sync"]["enabled"] is True
+            assert client.post("/login", json={"username": "admin", "password": "Admin1234!"}).status_code == 200
             assert client.get("/songs", headers={"Accept": "text/html"}).text == "<html>desktop</html>"
             assert client.get("/asset.js").text == "ok"
             assert client.get("/missing.js").status_code == 404
@@ -82,12 +83,19 @@ def test_desktop_service_persists_data_and_serves_frontend(tmp_path):
     finally:
         stop_desktop(process)
 
+    with sqlite3.connect(data / "backend/db/app.db") as db:
+        assert db.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 5
+        assert db.execute("SELECT COUNT(*) FROM songs").fetchone()[0] == 2
+        db.execute("UPDATE users SET clear_name = 'Changed' WHERE user_name = 'admin'")
+
     process, url = start_desktop(data, frontend)
     try:
         assert httpx.get(f"{url}/health").status_code == 200
         assert (data / ".env").read_text(encoding="utf-8") == env_content
     finally:
         stop_desktop(process)
+    with sqlite3.connect(data / "backend/db/app.db") as db:
+        assert db.execute("SELECT clear_name FROM users WHERE user_name = 'admin'").fetchone()[0] == "Changed"
 
 
 def test_desktop_snapshot_bootstrap_and_restart(tmp_path):
@@ -155,8 +163,18 @@ def prepare_database_without_identity(tmp_path, *, peer=False):
     frontend.mkdir()
     (frontend / "index.html").write_text("desktop", encoding="utf-8")
     data = tmp_path / "data"
-    process, _ = start_desktop(data, frontend)
-    stop_desktop(process)
+    (data / "backend/db").mkdir(parents=True)
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(ROOT),
+        "PYTHON_DOTENV_DISABLED": "1",
+        "DATABASE_URL": f"sqlite:///{data / 'backend/db/app.db'}",
+    }
+    env.pop("NODE_ID", None)
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT, env=env, check=True, capture_output=True,
+    )
     (data / ".env").write_text(
         "SECRET_KEY=desktop-test-secret-key-at-least-32-bytes\n"
         "DATABASE_URL=sqlite:///./backend/db/app.db\n"

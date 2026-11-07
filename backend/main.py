@@ -16,6 +16,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend import auth, models, schemas
+from backend.bootstrap import initialize_missing_database
 from backend.database import engine
 from backend.paths import data_root
 from backend.routers import admin, password_reset
@@ -78,6 +79,7 @@ def _ensure_backward_compatible_schema() -> None:
             )
 
 
+initialize_missing_database()
 _ensure_backward_compatible_schema()
 PROJECT_ROOT = data_root()
 SCORES_STORAGE_ROOT = PROJECT_ROOT / "backend" / "storage" / "scores"

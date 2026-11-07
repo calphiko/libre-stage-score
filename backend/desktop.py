@@ -186,6 +186,10 @@ def run(data_dir: Path, frontend: Path) -> None:
         else:
             restore_snapshot(Path(snapshot).expanduser(), hub_url, credential_reference)
             marker.write_text(json.dumps(identity), encoding="utf-8")
+    else:
+        from backend.bootstrap import initialize_missing_database
+
+        initialize_missing_database()
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("script_location", str(root / "backend" / "alembic"))
     command.upgrade(config, "head")

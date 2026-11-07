@@ -9,9 +9,20 @@ und die Umsetzung pro Phase stehen in [`docs/`](docs/PLAN_DISTRIBUTED_SYNC.md).
 
 1. `.env.example` nach `.env` kopieren und mindestens `SECRET_KEY` setzen.
 2. `task install`
-3. `task node:init`
-4. `task backend-dev`
-5. In einem zweiten Terminal: `task frontend-dev`
+3. `task backend-dev`
+4. In einem zweiten Terminal: `task frontend-dev`
+
+Beim ersten Backend-Start wird eine fehlende SQLite-Datenbank mit dem Demo-Datenbestand
+und einer Node-Identität angelegt. Eine bereits vorhandene Datenbank wird nicht mit
+Demo-Daten überschrieben; auch eine leere vorhandene Datei gilt als vorhanden. Der
+Demo-Admin heißt `admin` und hat das Passwort `Admin1234!`; die übrigen Demo-Benutzer
+verwenden `Demo1234!`. Diese bekannten Zugangsdaten sind ausschließlich für lokale
+Entwicklung geeignet und müssen vor einem erreichbaren Betrieb ersetzt werden.
+In-Memory-Datenbanken, SQLite-URI-Verbindungen und andere Datenbanken werden nicht
+automatisch mit Demo-Daten befüllt.
+Nach einem unterbrochenen Erststart verhindert ein Verzeichnis `<Datenbank>.initializing`
+einen weiteren Start. Es darf erst entfernt werden, wenn keine Initialisierung mehr läuft;
+zuvor sind Datenbank und Dateiablage auf einen unvollständigen Seed zu prüfen.
 
 `task node:init` führt die Alembic-Migrationen aus und initialisiert die persistierte
 Node-Identität. `task db:seed-demo` aktualisiert ebenfalls zuerst das Schema bis zum

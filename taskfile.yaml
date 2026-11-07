@@ -9,19 +9,16 @@ tasks:
 
   db:prepare:
     cmds:
-      - mkdir -p backend/db
-      - touch backend/db/app.db
-    desc: Ensure the SQLite database file exists
+      - uv run python -m backend.operations prepare-database
+    desc: Ensure the configured database directory exists
 
   backend-dev:
     cmds:
-      - task db:prepare
       - uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
     desc: Start FastAPI backend
 
   backend-debug:
     cmds:
-      - task db:prepare
       - uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug --access-log
     desc: Start FastAPI backend with verbose request logging
 
