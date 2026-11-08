@@ -14,6 +14,65 @@ use std::{
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+#[cfg(target_os = "macos")]
+fn backend_path(
+    current: Option<&std::ffi::OsStr>,
+) -> Result<std::ffi::OsString, std::env::JoinPathsError> {
+    let mut paths: Vec<_> = match current {
+        Some(path) => std::env::split_paths(path).collect(),
+        None => ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect(),
+    };
+    for path in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        let path = std::path::PathBuf::from(path);
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    std::env::join_paths(paths)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::backend_path;
+    use std::{ffi::OsStr, path::PathBuf, process::Command};
+
+    #[test]
+    fn backend_path_preserves_existing_entries_and_appends_homebrew() {
+        let path = backend_path(Some(OsStr::new("/custom/bin:/usr/local/bin:/usr/bin"))).unwrap();
+        let paths: Vec<_> = std::env::split_paths(&path).collect();
+        assert_eq!(
+            paths,
+            [
+                "/custom/bin",
+                "/usr/local/bin",
+                "/usr/bin",
+                "/opt/homebrew/bin"
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    #[test]
+    fn backend_path_is_passed_to_child_process() {
+        let path = backend_path(None).unwrap();
+        let output = Command::new("/usr/bin/printenv")
+            .arg("PATH")
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let child_path = std::str::from_utf8(&output.stdout).unwrap().trim_end();
+        assert_eq!(OsStr::new(child_path), path);
+        let paths: Vec<_> = std::env::split_paths(&path).collect();
+        assert!(paths.contains(&PathBuf::from("/usr/bin")));
+        assert!(paths.contains(&PathBuf::from("/opt/homebrew/bin")));
+        assert!(paths.contains(&PathBuf::from("/usr/local/bin")));
+    }
+}
+
 struct Backend {
     child: Mutex<Child>,
     _lock: File,
@@ -73,6 +132,8 @@ fn start(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             "spoke-backend"
         });
     let mut command = Command::new(sidecar);
+    #[cfg(target_os = "macos")]
+    command.env("PATH", backend_path(std::env::var_os("PATH").as_deref())?);
     let log_file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -181,6 +242,7 @@ fn main() {
                     .show();
                 app.handle().exit(1);
             }
+
             Ok(())
         })
         .build(tauri::generate_context!());

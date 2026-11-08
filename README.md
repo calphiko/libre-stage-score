@@ -44,6 +44,8 @@ Befehle richten diese nicht ein.
 
 Die PDF-Seitenvorschau benötigt weiterhin `pdftoppm` im Suchpfad des Backend-Prozesses;
 optionale OCR benötigt zusätzlich `tesseract`. Diese Programme werden nicht mitgeliefert.
+Unter macOS ergänzt die App für das Backend die üblichen Homebrew-Verzeichnisse
+`/opt/homebrew/bin` und `/usr/local/bin`, ohne den vorhandenen Suchpfad zu ersetzen.
 Stimmen-PDFs werden mit dem Standard-PDF-Programm des Betriebssystems geöffnet.
 Die App erstellt dazu bei jedem Öffnen eine Kopie unter `opened-pdfs` im
 App-Datenverzeichnis. Diese Kopien bleiben auch nach dem Schließen der App bestehen,
@@ -60,9 +62,10 @@ Mit `LIBRE_STAGE_DESKTOP_DATA_DIR` kann beim Start ein anderes Verzeichnis gewä
 werden. Nur eine App darf gleichzeitig dasselbe Verzeichnis verwenden.
 
 Bei einem ersten Start ohne `.env` erzeugt die App eine Konfiguration mit zufälligem
-`SECRET_KEY`, lokaler SQLite-Datenbank und aktiviertem Sync. Das neue Replikat enthält
-noch keine Benutzer; für die Übernahme eines bestehenden Standorts ist das folgende
-Snapshot-Onboarding vorgesehen. `.env`, Datenbank, PDF-Ablage und Snapshots enthalten
+`SECRET_KEY`, lokaler SQLite-Datenbank und aktiviertem Sync. Ohne Snapshot wird eine
+fehlende Datenbank mit Demo-Daten und bekannten Demo-Zugangsdaten angelegt; diese sind
+nur für lokale Tests geeignet. Für die Übernahme eines bestehenden Standorts ist das
+folgende Snapshot-Onboarding vorgesehen. `.env`, Datenbank, PDF-Ablage und Snapshots enthalten
 schützenswerte Daten und müssen mit geeigneten Dateiberechtigungen und Backups geschützt
 werden. `DATABASE_URL` und die bestehenden Sync-Variablen bleiben konfigurierbar;
 relative Datenbankpfade beziehen sich auf das App-Datenverzeichnis.
